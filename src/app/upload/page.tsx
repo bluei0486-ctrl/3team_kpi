@@ -3,7 +3,6 @@
 import { useState, useRef } from "react";
 import { uploadExcelData } from "@/app/actions/upload";
 import { useRouter } from "next/navigation";
-
 type UploadStatus = "idle" | "uploading" | "success" | "error";
 
 interface FileState {

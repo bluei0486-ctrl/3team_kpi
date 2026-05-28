@@ -444,9 +444,9 @@ export default function DashboardClient({ isDemo, initialData }: DashboardClient
       t.year_month && t.year_month.startsWith(activeMonth)
     );
 
+    const activeYearMonthDate = `${activeMonth}-01`;
     const monthlyAdvertiserSales = (advertiserSales || []).filter((s: any) =>
-      (s.start_date && s.start_date.startsWith(activeMonth)) ||
-      (s.end_date && s.end_date.startsWith(activeMonth))
+      s.year_month && s.year_month === activeYearMonthDate
     );
 
     // 1. Calculate active date reference for the active month
@@ -574,43 +574,54 @@ export default function DashboardClient({ isDemo, initialData }: DashboardClient
     const labelM_Target = `${parseInt(activeMonth.split("-")[1], 10)}월 목표`;
     const labelM_Expected = `${parseInt(activeMonth.split("-")[1], 10)}월 예상`;
 
+    // AI Insights for current context
+    const aiInsightsList = initialData?.aiInsights || [];
+    const activeInsights = aiInsightsList.filter((i: any) => i.year_month === `${activeMonth}-01`);
+    const teamInsight = activeInsights.find((i: any) => !i.marketer_id) || {};
+    
+    let currentAiInsight = teamInsight;
+    if (isFiltered && selectedMarketerId) {
+      currentAiInsight = activeInsights.find((i: any) => i.marketer_id === selectedMarketerId) || {};
+    }
+    const additionalAi = currentAiInsight.additional_insights || {};
+
     const historicalTrend = [
       {
         label: labelM3,
         sales: salesM3,
         target: null,
         rate: "-",
-        desc: "안정적인 매출 유지 구간",
+        desc: additionalAi?.trend_comments?.month_minus_3 ?? "안정적인 매출 유지 구간",
       },
       {
         label: labelM2,
         sales: salesM2,
         target: null,
         rate: (isFiltered && salesM3 === 0) ? "-" : `${rateM2 >= 0 ? "▲" : "▼"} ${Math.abs(rateM2).toFixed(1)}%`,
-        desc: "매체 다각화 및 실적 활성화 단계",
+        desc: additionalAi?.trend_comments?.month_minus_2 ?? "매체 다각화 및 실적 활성화 단계",
       },
       {
         label: labelM1,
         sales: salesM1,
         target: targetM1 || null,
         rate: (isFiltered && salesM2 === 0) ? "-" : `${rateM1 >= 0 ? "▲" : "▼"} ${Math.abs(rateM1).toFixed(1)}%`,
-        desc: "전월 매출 안정화 및 관리 단계",
+        desc: additionalAi?.trend_comments?.month_minus_1 ?? "전월 매출 안정화 및 관리 단계",
       },
       {
         label: labelM_Target,
         sales: targetSales,
         target: targetSales,
         rate: "-",
-        desc: "성장세를 이어가기 위한 당월 목표 설정",
+        desc: additionalAi?.trend_comments?.current_target ?? "성장세를 이어가기 위한 당월 목표 설정",
       },
       {
         label: labelM_Expected,
         sales: expectedSales,
         target: targetSales,
         rate: targetSales > 0 ? `달성률 ${((expectedSales / targetSales) * 100).toFixed(1)}%` : "0.0%",
-        desc: targetSales > 0
+        desc: additionalAi?.trend_comments?.current_expected ?? (targetSales > 0
           ? `현재 일평균 스텝(${formatNumberShort(dailyAvg)}) 기준 시 ${(targetSales - expectedSales > 0 ? formatNumber(targetSales - expectedSales) : "0원")} 부족 예상`
-          : `현재 일평균 스텝: ${formatNumber(dailyAvg)}`,
+          : `현재 일평균 스텝: ${formatNumber(dailyAvg)}`),
       },
     ];
 
@@ -624,11 +635,17 @@ export default function DashboardClient({ isDemo, initialData }: DashboardClient
     const mediaShare = Array.from(mediaMap.entries())
       .map(([media, amount]) => {
         const pct = totalSales > 0 ? (amount / totalSales) * 100 : 0;
+        let desc = "영업 실적 매체";
+        if (media === "네이버" || media === "지마켓") {
+          desc = additionalAi?.media_comments?.[media] ?? (media === "네이버" ? "압도적 1위 매체" : "오픈마켓 핵심");
+        } else {
+          desc = additionalAi?.media_comments?.[media] ?? "영업 실적 매체";
+        }
         return {
           media,
           amount,
           pct: Math.round(pct * 10) / 10,
-          desc: media === "네이버" ? "압도적 1위 매체" : media === "지마켓" ? "오픈마켓 핵심" : "영업 실적 매체",
+          desc,
         };
       })
       .sort((a, b) => b.amount - a.amount);
@@ -649,7 +666,7 @@ export default function DashboardClient({ isDemo, initialData }: DashboardClient
       // Count unique advertisers for this marketer from advertiserSales in the active month
       const mAdvSet = new Set<string>();
       (advertiserSales || []).forEach((s: any) => {
-        const isInMonth = (s.start_date && s.start_date.startsWith(activeMonth)) || (s.end_date && s.end_date.startsWith(activeMonth));
+        const isInMonth = s.year_month && s.year_month === activeYearMonthDate;
         if (s.advertisers?.marketer_id === m.id && s.advertiser_id && isInMonth) {
           mAdvSet.add(s.advertiser_id);
         }
@@ -684,16 +701,8 @@ export default function DashboardClient({ isDemo, initialData }: DashboardClient
           .join(", ");
       }
 
-      const originalDescs: Record<string, string> = {
-        정태수: "매출 1위 / 올라운더. 팀 내 최다 계정을 통제하며 안정적 매출 견인 중이나 당월 이탈 역시 최다인 상태로 리스크 케어 요망.",
-        정태민: "매출 2위 / 소수 정예형. 극단적 네이버 집중을 통해 계정당 단가를 극한으로 끌어올림.",
-        심재용: "매출 3위 / 오픈마켓 특화. 에이블리 등 매체 확장 기여.",
-        정윤지: "매출 4위 / 매체 확장형. 지마켓 통합 매체 기반 확보.",
-        신희진: "매출 5위 / 다품종 대량형. 대량 세팅 운영, 리소스 최적화 필요.",
-        김정환: "매출 6위 / 영업 돌파형. 타 대행사 계정 딜(영업 이관) 능력 탁월.",
-        장평화: "매출 7위 / 고효율 방어형. 견고한 방어력 보유.",
-        권지원: "매출 8위 / 전담 육성 단계. 매체 분산 및 스케일업 시급.",
-      };
+      // AI 코멘트를 해당 마케터에 맞게 조회
+      const mAiInsight = activeInsights.find((i: any) => i.marketers?.name === m.name)?.additional_insights || {};
 
       return {
         name: m.name,
@@ -703,7 +712,7 @@ export default function DashboardClient({ isDemo, initialData }: DashboardClient
         expected: Math.round(mExpected),
         rate: Math.round(mRate * 10) / 10,
         mediaMix,
-        desc: originalDescs[m.name] || `${m.name} 마케터 실적 데이터`,
+        desc: mAiInsight?.marketer_desc ?? `${m.name} 마케터 실적 데이터`,
         newCount: mNew,
         transIn: mTransIn,
         transOut: mTransOut,
@@ -766,24 +775,20 @@ export default function DashboardClient({ isDemo, initialData }: DashboardClient
     const weeklyAvg = tempPattern.reduce((sum, w) => sum + w.amount, 0) / 7;
 
     const weeklyPattern = tempPattern.map((w) => {
-      let desc = "소진 방어선";
+      let fallbackDesc = "소진 방어선";
       if (w.day === maxDay && w.amount > 0) {
-        desc = "주간 최고점";
+        fallbackDesc = "주간 최고점";
       } else if (w.day === minDay && w.amount > 0) {
-        desc = "주간 최저점";
-      } else if (w.day === "월요일") {
-        desc = "주간 시동 구간";
-      } else if (w.day === "화요일") {
-        desc = "상승세 유지";
-      } else if (w.day === "수요일") {
-        desc = "주 중반 방어";
-      } else if (w.day === "목요일") {
-        desc = w.amount >= weeklyAvg ? "평균 스텝 상회" : "평균 스텝 하회";
-      } else if (w.day === "금요일") {
-        desc = "소진 둔화";
-      } else if (w.day === "일요일") {
-        desc = "주말 야간 회복";
-      }
+        fallbackDesc = "주간 최저점";
+      } else if (w.day === "월요일") fallbackDesc = "주간 시동 구간";
+      else if (w.day === "화요일") fallbackDesc = "상승세 유지";
+      else if (w.day === "수요일") fallbackDesc = "주 중반 방어";
+      else if (w.day === "목요일") fallbackDesc = w.amount >= weeklyAvg ? "평균 스텝 상회" : "평균 스텝 하회";
+      else if (w.day === "금요일") fallbackDesc = "소진 둔화";
+      else if (w.day === "일요일") fallbackDesc = "주말 야간 회복";
+
+      const desc = additionalAi?.weekly_comments?.[w.day] ?? fallbackDesc;
+      
       return {
         ...w,
         desc,
@@ -834,6 +839,8 @@ export default function DashboardClient({ isDemo, initialData }: DashboardClient
       marketers: parsedMarketers,
       weeklyPattern,
       advertisers: advertisersTop10,
+      riskGuide: currentAiInsight.risk_guide || "",
+      closingStrategy: currentAiInsight.closing_strategy || "",
     };
   }, [isDemo, initialData, selectedMarketer, selectedMonth, calculatedAvailableMonths]);
 
@@ -899,60 +906,12 @@ export default function DashboardClient({ isDemo, initialData }: DashboardClient
   // 3. DYNAMIC INSIGHTS ENGINE
   // ========================================================
   const dynamicRiskGuide = useMemo(() => {
-    const activeMonth = selectedMonth || (calculatedAvailableMonths[0] || "2026-05");
-    const activeMonthNum = parseInt(activeMonth.split("-")[1], 10);
-
-    if (selectedMarketer === "all") {
-      const shortfall = stats.targetSales - stats.expectedSales;
-      const dailyAvg = stats.totalSales / stats.elapsedDays;
-      const requiredDaily = (stats.targetSales - stats.totalSales) / (stats.totalDaysInMonth - stats.elapsedDays);
-      const percentageIncrease = Math.round(((requiredDaily - dailyAvg) / dailyAvg) * 100);
-
-      if (shortfall > 0) {
-        return `남은 ${activeMonthNum}월 일정 동안 목표액을 100% 채우기 위해서는 현재 일평균 매출을 <b>${formatNumber(dailyAvg).replace("원", "")}원</b>에서 <b>${formatNumber(requiredDaily).replace("원", "")}원</b> 수준으로 약 <b>${percentageIncrease}% 가량 홀딩 볼륨을 리프트업</b>해야 합니다. 월말 집중 예산 증액 딜을 추진하거나 타 대행사 이관 계정의 세팅 속도를 긴급 단축시켜야 하는 시점입니다.`;
-      } else {
-        return `현재 일평균 매출 추이(<b>${formatNumber(dailyAvg).replace("원", "")}원</b>)가 우수하여 ${activeMonthNum}월 마감 목표액을 안정적으로 돌파할 것으로 시뮬레이션되었습니다. 추가 리포지셔닝 없이 현 매출 볼륨을 견고히 방어하는 마감 가이드라인을 유지해 주십시오.`;
-      }
-    } else {
-      const m = stats.marketers.find((mk: any) => mk.name === selectedMarketer);
-      if (!m) return "";
-      const mShortfall = m.target - m.expected;
-      const mDailyAvg = m.sales / stats.elapsedDays;
-      const mRequired = (m.target - m.sales) / (stats.totalDaysInMonth - stats.elapsedDays);
-      const pct = mDailyAvg > 0 ? Math.round(((mRequired - mDailyAvg) / mDailyAvg) * 100) : 0;
-
-      if (mShortfall > 0) {
-        return `<b>${m.name} 마케터</b>의 남은 일정 목표 달성을 위해서는 일평균 매출을 <b>${formatNumber(mDailyAvg).replace("원", "")}원</b>에서 <b>${formatNumber(mRequired).replace("원", "")}원</b> 수준으로 약 <b>${pct}% 리프트업</b>해야 합니다. 주력 매체 비중 조절과 이탈 방어에 집중해야 하는 구간입니다.`;
-      } else {
-        return `<b>${m.name} 마케터</b>는 현재 목표 달성률 <b>${m.rate}%</b>로 마감 예상을 상회하는 고효율 성과 구간에 안착해 있습니다. 타 매체 확장을 통한 추가 마진 확보 전략을 모색하십시오.`;
-      }
-    }
-  }, [selectedMarketer, stats, selectedMonth, calculatedAvailableMonths]);
+    return stats.riskGuide || "데이터 분석 중이거나 리스크 가이드가 없습니다.";
+  }, [stats]);
 
   const dynamicClosingStrategy = useMemo(() => {
-    const activeMonth = selectedMonth || (calculatedAvailableMonths[0] || "2026-05");
-    const activeMonthNum = parseInt(activeMonth.split("-")[1], 10);
-
-    const topAdv = stats.advertisers[0];
-    const secondAdv = stats.advertisers[1];
-    const topName = topAdv?.name || "";
-    const secondName = secondAdv?.name || "";
-
-    if (selectedMarketer !== "all") {
-      const m = stats.marketers.find((mk: any) => mk.name === selectedMarketer);
-      if (!m) return "";
-      let strategy = `<b>${m.name} 마케터</b>는 현재 ${activeMonthNum}월 목표 대비 예상 달성률 <b>${m.rate}%</b>를 기록 중입니다. `;
-      if (topName) {
-        strategy += `주요 관리 계정인 <b>${topName}</b>${secondName ? `, <b>${secondName}</b>` : ""}의 매출 추이를 면밀히 모니터링하여 이탈을 방지하는 것이 최우선 과제입니다. `;
-      }
-      strategy += `매출 활성화를 위해 금~토 주말 최저점 소진 구간에 대응하는 매체별 맞춤형 타임 프로모션을 정비하고 광고주 예산 최적화를 유도하시기 바랍니다.`;
-      return strategy;
-    }
-
-    const topMarketer = topAdv?.marketer || "심재용";
-    const secondMarketer = secondAdv?.marketer || "정태민";
-    return `최상위 우량 계정인 <b>${topName || "비제이커머스"}</b>와 <b>${secondName || "(주)웰템"}</b>은 각 담당 마케터(<b>${topMarketer}</b>, <b>${secondMarketer}</b>)의 집중 관리를 통해 안정적인 매출 리딩을 수행 중입니다. 매출 안정화를 위해 주말 최저점 구간(금~토)에 대응하는 오픈마켓 타임 딜 프로모션을 정비하고, 신희진 마케터 등 달성률이 다소 부진한 인원의 계정을 고단가 중심으로 재조율한다면 ${activeMonthNum}월 후반부 목표액 달성에 긍정적일 것으로 사료됩니다.`;
-  }, [stats, selectedMarketer, selectedMonth, calculatedAvailableMonths]);
+    return stats.closingStrategy || "데이터 분석 중이거나 마감 전략 가이드가 없습니다.";
+  }, [stats]);
 
   // ========================================================
   // 4. CHART SVG COORDINATES GENERATION
@@ -1474,9 +1433,9 @@ export default function DashboardClient({ isDemo, initialData }: DashboardClient
           <table className="report-data-table" style={{ marginBottom: "0" }}>
             <thead>
               <tr>
-                <th style={{ backgroundColor: "#f0fdf4", color: "#16a34a" }}>요일</th>
-                <th style={{ backgroundColor: "#f0fdf4", color: "#16a34a" }}>일평균 매출액</th>
-                <th style={{ backgroundColor: "#f0fdf4", color: "#16a34a" }}>특성</th>
+                <th style={{ backgroundColor: "#f0fdf4", color: "#16a34a", width: "15%", whiteSpace: "nowrap" }}>요일</th>
+                <th style={{ backgroundColor: "#f0fdf4", color: "#16a34a", width: "25%", whiteSpace: "nowrap" }}>일평균 매출액</th>
+                <th style={{ backgroundColor: "#f0fdf4", color: "#16a34a", width: "60%" }}>특성</th>
               </tr>
             </thead>
             <tbody>
@@ -1498,11 +1457,11 @@ export default function DashboardClient({ isDemo, initialData }: DashboardClient
 
                 return (
                   <tr key={row.day} style={{ backgroundColor: rowBg, fontWeight: rowWeight }}>
-                    <td className="text-center">{row.day}</td>
-                    <td className="text-right" style={{ color: textColor }}>
+                    <td className="text-center" style={{ whiteSpace: "nowrap" }}>{row.day}</td>
+                    <td className="text-right" style={{ color: textColor, whiteSpace: "nowrap" }}>
                       {row.amount.toLocaleString()}원
                     </td>
-                    <td className="text-center" style={{ color: textColor }}>{row.desc}</td>
+                    <td className="text-left" style={{ color: textColor, wordBreak: "keep-all", padding: "10px 15px" }}>{row.desc}</td>
                   </tr>
                 );
               })}
@@ -1591,7 +1550,7 @@ export default function DashboardClient({ isDemo, initialData }: DashboardClient
 
       {/* Dynamic closing strategy suggestion */}
       <div className="report-insight-box" style={{ backgroundColor: "#f8fafc", borderLeftColor: "#1e3a8a", marginTop: "25px" }}>
-        <div className="report-insight-title" style={{ color: "#1e3a8a" }}>🎯 3팀 총괄 마감 전략 제언</div>
+        <div className="report-insight-title" style={{ color: "#1e3a8a" }}>🎯 3팀 총괄 마감 전략 제안</div>
         <p style={{ margin: "4px 0 0 0", fontSize: "9pt", color: "#334155" }}>
           <span dangerouslySetInnerHTML={{ __html: dynamicClosingStrategy }} />
         </p>

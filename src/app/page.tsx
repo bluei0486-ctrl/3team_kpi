@@ -81,12 +81,13 @@ export default async function DashboardPage() {
         return allData;
       }
 
-      const [marketers, advertisers, dailySales, targets, advertiserSales] = await Promise.all([
+      const [marketers, advertisers, dailySales, targets, advertiserSales, aiInsights] = await Promise.all([
         fetchAll("marketers", "*"),
         fetchAll("advertisers", "*"),
         fetchAll("daily_sales", "*, marketers(name), media(name)"),
         fetchAll("monthly_sales_targets", "*, marketers(name), media(name)"),
-        fetchAll("advertiser_sales", "*, advertisers(name, marketer_id), media(name)")
+        fetchAll("advertiser_sales", "*, year_month, advertisers(name, marketer_id), media(name)"),
+        fetchAll("monthly_ai_insights", "*, marketers(name)")
       ]);
 
       databaseData = {
@@ -94,7 +95,8 @@ export default async function DashboardPage() {
         advertisers,
         dailySales,
         targets,
-        advertiserSales
+        advertiserSales,
+        aiInsights
       };
     } else {
       // Fallback: Read and parse local Excel files if they exist
@@ -384,12 +386,14 @@ export default async function DashboardPage() {
           }
 
           if (advId && mediaId && startDate && endDate) {
+            const activeMonthDate = `${activeYear}-${String(activeMonthNum).padStart(2, "0")}-01`;
             advertiserSalesList.push({
               id: randomUUID(),
               advertiser_id: advId,
               media_id: mediaId,
               start_date: startDate,
               end_date: endDate,
+              year_month: activeMonthDate,
               click_count: clickCount,
               amount,
               sales_employee_count: salesEmp,
@@ -408,7 +412,8 @@ export default async function DashboardPage() {
             advertisers: advertisersList,
             dailySales: dailySalesList,
             targets: monthlyTargetsList,
-            advertiserSales: advertiserSalesList
+            advertiserSales: advertiserSalesList,
+            aiInsights: [] // Empty fallback for local excel parsing
           };
         } catch (excelError) {
           console.error("Local Excel parsing failed, falling back to demo mode:", excelError);

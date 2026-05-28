@@ -1,8 +1,10 @@
 "use server";
 
+
+
 import * as XLSX from "xlsx";
 import { createClient } from "@/utils/supabase/server";
-import OpenAI from "openai";
+import { GoogleGenAI } from "@google/genai";
 
 interface UploadResponse {
   success: boolean;
@@ -380,6 +382,9 @@ export async function uploadExcelData(formData: FormData): Promise<UploadRespons
       if (targetErr) throw new Error(`Monthly targets upsert error: ${targetErr.message}`);
     }
 
+    // Compute the active month date string (based on daily sales dates)
+    const activeTargetsDate = `${activeYear}-${String(activeMonthNum).padStart(2, "0")}-01`;
+
     // 9. Upsert Advertiser Period Sales
     const advertiserSalesList: any[] = [];
     advertiserData.forEach((row) => {
@@ -422,6 +427,7 @@ export async function uploadExcelData(formData: FormData): Promise<UploadRespons
           media_id: mediaId,
           start_date: startDate,
           end_date: endDate,
+          year_month: activeTargetsDate,
           click_count: clickCount,
           amount,
           sales_employee_count: salesEmp,
@@ -433,7 +439,7 @@ export async function uploadExcelData(formData: FormData): Promise<UploadRespons
     // Aggregate duplicate keys in advertiserSalesList to prevent advertiser sales unique constraint errors
     const aggregatedAdvertiserSales = new Map<string, any>();
     advertiserSalesList.forEach((item) => {
-      const key = `${item.advertiser_id}_${item.media_id}_${item.start_date}_${item.end_date}`;
+      const key = `${item.advertiser_id}_${item.media_id}_${item.start_date}_${item.end_date}_${item.year_month}`;
       if (aggregatedAdvertiserSales.has(key)) {
         const existing = aggregatedAdvertiserSales.get(key);
         existing.click_count += item.click_count;
@@ -448,13 +454,12 @@ export async function uploadExcelData(formData: FormData): Promise<UploadRespons
     for (const chunk of advSalesChunks) {
       const { error: advSalesErr } = await supabase
         .from("advertiser_sales")
-        .upsert(chunk, { onConflict: "advertiser_id,media_id,start_date,end_date" });
+        .upsert(chunk, { onConflict: "advertiser_id,media_id,start_date,end_date,year_month" });
       if (advSalesErr) throw new Error(`Advertiser sales upsert error: ${advSalesErr.message}`);
     }
 
     // --- AI Insights Generation (Graceful Degradation) ---
     try {
-      const activeTargetsDate = `${activeYear}-${String(activeMonthNum).padStart(2, "0")}-01`;
       
       let teamTotalTarget = 0;
       let teamTotalSales = 0;
@@ -494,47 +499,127 @@ export async function uploadExcelData(formData: FormData): Promise<UploadRespons
         };
       });
 
+      const teamTrend: Record<string, number> = {};
+      const teamMedia: Record<string, number> = {};
+      const teamWeekly: Record<string, number> = {};
+      const marketerDetailMap = new Map<string, any>();
+      
+      dbMarketerMap.forEach((id, name) => {
+        marketerDetailMap.set(name, { trend: {}, media: {}, weekly: {} });
+      });
+
+      finalMonthlyTargetsList.forEach((item) => {
+        let mName = "알 수 없음";
+        for (const [name, id] of dbMarketerMap.entries()) {
+          if (id === item.marketer_id) {
+            mName = name;
+            break;
+          }
+        }
+        teamTrend[item.year_month] = (teamTrend[item.year_month] || 0) + item.actual_sales_amount;
+        if (marketerDetailMap.has(mName)) {
+          marketerDetailMap.get(mName).trend[item.year_month] = (marketerDetailMap.get(mName).trend[item.year_month] || 0) + item.actual_sales_amount;
+        }
+      });
+
+      finalDailySalesList.forEach((item) => {
+        let mName = "알 수 없음";
+        for (const [name, id] of dbMarketerMap.entries()) {
+          if (id === item.marketer_id) {
+            mName = name;
+            break;
+          }
+        }
+        let mediaName = "알 수 없음";
+        for (const [name, id] of mediaMap.entries()) {
+          if (id === item.media_id) {
+            mediaName = name;
+            break;
+          }
+        }
+        
+        if (item.sales_date && item.sales_date.startsWith(activeTargetsDate.substring(0, 7))) {
+          teamMedia[mediaName] = (teamMedia[mediaName] || 0) + item.amount;
+          if (marketerDetailMap.has(mName)) {
+            marketerDetailMap.get(mName).media[mediaName] = (marketerDetailMap.get(mName).media[mediaName] || 0) + item.amount;
+          }
+          
+          const date = new Date(item.sales_date);
+          const days = ["일요일", "월요일", "화요일", "수요일", "목요일", "금요일", "토요일"];
+          const dayName = days[date.getDay()];
+          
+          teamWeekly[dayName] = (teamWeekly[dayName] || 0) + item.amount;
+          if (marketerDetailMap.has(mName)) {
+            marketerDetailMap.get(mName).weekly[dayName] = (marketerDetailMap.get(mName).weekly[dayName] || 0) + item.amount;
+          }
+        }
+      });
+
       const aiPromptData = {
         month: activeTargetsDate,
         team_summary: {
           total_target: teamTotalTarget,
           total_sales: teamTotalSales,
           achievement_rate: teamAchievementRate + "%",
+          trend: teamTrend,
+          media_share: teamMedia,
+          weekly_pattern: teamWeekly
         },
-        marketer_summaries: marketerSummaries,
+        marketer_summaries: marketerSummaries.map(m => ({
+          ...m,
+          details: marketerDetailMap.get(m.name)
+        })),
       };
 
-      const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+      const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4o",
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content: `너는 10년 차 탑티어 퍼포먼스 마케팅 디렉터이자 영업 관리자야.
-주어진 데이터를 분석하여 '팀 전체' 및 '각 마케터별'로 매우 구체적이고 실전적인 액션 아이템을 제안해.
-단순히 숫자를 반복하지 마. (예: 'A매체가 50%입니다' -> X / 'A매체 의존도가 높으니 타임딜 프로모션으로 B매체를 방어하세요' -> O)
-각 대상(전체 및 마케터별)에 대해 risk_guide(리스크 제어 가이드)와 closing_strategy(총괄 마감 전략 제언)를 각각 2~3문장의 직관적인 한국어로 작성해.
-반드시 아래 형태의 JSON 객체로 반환해:
+      const promptStr = `너는 10년 차 탑티어 퍼포먼스 마케팅 디렉터이자 영업 관리자야.
+주어진 데이터를 분석하여 '팀 전체' 및 '각 마케터별'로 매우 구체적이고 실전적인 액션 아이템과 현황 코멘트를 제안해.
+각 대상(전체 및 마케터별)에 대해 아래 JSON 구조를 엄격히 지켜서 반환해:
 {
   "insights": [
     {
-      "marketer_name": "전체" | "마케터명",
-      "risk_guide": "...",
-      "closing_strategy": "..."
+      "marketer_name": "전체" 또는 "마케터명",
+      "risk_guide": "리스크 제어 가이드 2~3문장",
+      "closing_strategy": "총괄 마감 전략 제안 2~3문장",
+      "marketer_desc": "해당 마케터(또는 팀)에 대한 한 줄 평 (예: 압도적 매출 1위이나 당월 이탈 주의)",
+      "trend_comments": {
+        "month_minus_3": "3개월 전 실적 코멘트",
+        "month_minus_2": "2개월 전 실적 코멘트",
+        "month_minus_1": "1개월 전 실적 코멘트",
+        "current_target": "당월 목표 코멘트",
+        "current_expected": "당월 예상 코멘트"
+      },
+      "media_comments": {
+        "네이버": "네이버 매체 코멘트",
+        "지마켓": "지마켓 매체 코멘트"
+        // 기타 주요 매체들...
+      },
+      "weekly_comments": {
+        "월요일": "월요일 패턴 코멘트",
+        "화요일": "화요일 패턴 코멘트",
+        "수요일": "수요일 패턴 코멘트",
+        "목요일": "목요일 패턴 코멘트",
+        "금요일": "금요일 패턴 코멘트",
+        "토요일": "토요일 패턴 코멘트",
+        "일요일": "일요일 패턴 코멘트"
+      }
     }
   ]
-}`
-          },
-          {
-            role: "user",
-            content: JSON.stringify(aiPromptData)
-          }
-        ]
+}
+
+[분석할 데이터]
+${JSON.stringify(aiPromptData)}`;
+
+      const response = await ai.models.generateContent({
+        model: "gemini-3.5-flash",
+        contents: promptStr,
+        config: {
+          responseMimeType: "application/json",
+        }
       });
 
-      const content = completion.choices[0].message.content;
+      const content = response.text;
       if (content) {
         const parsed = JSON.parse(content);
         if (parsed.insights && Array.isArray(parsed.insights)) {
@@ -559,6 +644,12 @@ export async function uploadExcelData(formData: FormData): Promise<UploadRespons
                 marketer_id: mId,
                 risk_guide: insight.risk_guide,
                 closing_strategy: insight.closing_strategy,
+                additional_insights: {
+                  marketer_desc: insight.marketer_desc,
+                  trend_comments: insight.trend_comments,
+                  media_comments: insight.media_comments,
+                  weekly_comments: insight.weekly_comments,
+                }
               };
             });
 

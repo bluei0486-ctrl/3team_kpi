@@ -11,12 +11,12 @@ export async function loginAction(formData: FormData) {
     user === process.env.BASIC_AUTH_USER &&
     pwd === process.env.BASIC_AUTH_PASSWORD
   ) {
-    // 맞으면 브라우저에 쿠키 생성 (1주일간 유지)
+    // 맞으면 브라우저에 쿠키 생성 (1시간 유지)
     const cookieStore = await cookies();
     cookieStore.set('team_auth', 'authenticated', {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      maxAge: 60 * 60 * 24 * 7, // 7일
+      maxAge: 60 * 60, // 1시간
       path: '/',
     });
     return { success: true };
