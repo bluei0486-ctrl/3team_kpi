@@ -277,13 +277,15 @@ export async function uploadExcelData(formData: FormData): Promise<UploadRespons
         arr.slice(i * size, i * size + size)
       );
 
-    const dailySalesChunks = chunkArray(finalDailySalesList, 200);
-    for (const chunk of dailySalesChunks) {
-      const { error: dailyErr } = await supabase
-        .from("daily_sales")
-        .upsert(chunk, { onConflict: "marketer_id,media_id,sales_date" });
-      if (dailyErr) throw new Error(`Daily sales upsert error: ${dailyErr.message}`);
-    }
+    const dailySalesChunks = chunkArray(finalDailySalesList, 1000);
+    await Promise.all(
+      dailySalesChunks.map(async (chunk) => {
+        const { error: dailyErr } = await supabase
+          .from("daily_sales")
+          .upsert(chunk, { onConflict: "marketer_id,media_id,sales_date" });
+        if (dailyErr) throw new Error(`Daily sales upsert error: ${dailyErr.message}`);
+      })
+    );
 
         // 8. Upsert Monthly Sales Targets & History
     let activeYear = new Date().getFullYear();
@@ -374,13 +376,15 @@ export async function uploadExcelData(formData: FormData): Promise<UploadRespons
     });
     const finalMonthlyTargetsList = Array.from(aggregatedMonthlyTargets.values());
 
-    const monthlyChunks = chunkArray(finalMonthlyTargetsList, 200);
-    for (const chunk of monthlyChunks) {
-      const { error: targetErr } = await supabase
-        .from("monthly_sales_targets")
-        .upsert(chunk, { onConflict: "marketer_id,media_id,year_month" });
-      if (targetErr) throw new Error(`Monthly targets upsert error: ${targetErr.message}`);
-    }
+    const monthlyChunks = chunkArray(finalMonthlyTargetsList, 1000);
+    await Promise.all(
+      monthlyChunks.map(async (chunk) => {
+        const { error: targetErr } = await supabase
+          .from("monthly_sales_targets")
+          .upsert(chunk, { onConflict: "marketer_id,media_id,year_month" });
+        if (targetErr) throw new Error(`Monthly targets upsert error: ${targetErr.message}`);
+      })
+    );
 
     // Compute the active month date string (based on daily sales dates)
     const activeTargetsDate = `${activeYear}-${String(activeMonthNum).padStart(2, "0")}-01`;
@@ -450,13 +454,15 @@ export async function uploadExcelData(formData: FormData): Promise<UploadRespons
     });
     const finalAdvertiserSalesList = Array.from(aggregatedAdvertiserSales.values());
 
-    const advSalesChunks = chunkArray(finalAdvertiserSalesList, 200);
-    for (const chunk of advSalesChunks) {
-      const { error: advSalesErr } = await supabase
-        .from("advertiser_sales")
-        .upsert(chunk, { onConflict: "advertiser_id,media_id,start_date,end_date,year_month" });
-      if (advSalesErr) throw new Error(`Advertiser sales upsert error: ${advSalesErr.message}`);
-    }
+    const advSalesChunks = chunkArray(finalAdvertiserSalesList, 1000);
+    await Promise.all(
+      advSalesChunks.map(async (chunk) => {
+        const { error: advSalesErr } = await supabase
+          .from("advertiser_sales")
+          .upsert(chunk, { onConflict: "advertiser_id,media_id,start_date,end_date,year_month" });
+        if (advSalesErr) throw new Error(`Advertiser sales upsert error: ${advSalesErr.message}`);
+      })
+    );
 
     // --- AI Insights Generation (Graceful Degradation) ---
     try {
