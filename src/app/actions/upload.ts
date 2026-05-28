@@ -1,6 +1,6 @@
 "use server";
 
-
+export const maxDuration = 60; // Set Vercel Serverless Function timeout to 60 seconds
 
 import * as XLSX from "xlsx";
 import { createClient } from "@/utils/supabase/server";
