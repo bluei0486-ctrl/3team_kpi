@@ -1,0 +1,1602 @@
+"use client";
+
+import { useState, useMemo, useRef, useCallback, useEffect } from "react";
+import { flushSync } from "react-dom";
+import Link from "next/link";
+import { useHeader } from "@/components/HeaderContext";
+
+interface DashboardClientProps {
+  isDemo: boolean;
+  initialData: any;
+}
+
+function getPrecedingDateStr(activeMonthStr: string, monthsAgo: number): string {
+  const [yearStr, monthStr] = activeMonthStr.split("-");
+  const year = parseInt(yearStr, 10);
+  const month = parseInt(monthStr, 10);
+  
+  let targetMonth = month - monthsAgo;
+  let targetYear = year;
+  while (targetMonth <= 0) {
+    targetMonth += 12;
+    targetYear -= 1;
+  }
+  return `${targetYear}-${String(targetMonth).padStart(2, "0")}-01`;
+}
+
+export default function DashboardClient({ isDemo, initialData }: DashboardClientProps) {
+  const [selectedMarketer, setSelectedMarketer] = useState<string>("all");
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [isCapturing, setIsCapturing] = useState(false);
+  const reportRef = useRef<HTMLDivElement>(null);
+  const { setReferenceDate, setAvailableMonths, selectedMonth, setSelectedMonth } = useHeader();
+
+  // Extract available months from initialData
+  const calculatedAvailableMonths = useMemo(() => {
+    if (isDemo || !initialData || !initialData.dailySales) {
+      return ["2026-05"];
+    }
+    const { dailySales } = initialData;
+    const monthsSet = new Set<string>();
+    (dailySales || []).forEach((s: any) => {
+      if (s.sales_date) {
+        monthsSet.add(s.sales_date.substring(0, 7)); // "YYYY-MM"
+      }
+    });
+    return Array.from(monthsSet).sort().reverse();
+  }, [isDemo, initialData]);
+
+  // Sync available months and default selected month with the HeaderContext
+  useEffect(() => {
+    setAvailableMonths(calculatedAvailableMonths);
+    if (calculatedAvailableMonths.length > 0) {
+      if (!selectedMonth || !calculatedAvailableMonths.includes(selectedMonth)) {
+        setSelectedMonth(calculatedAvailableMonths[0]);
+      }
+    }
+  }, [calculatedAvailableMonths, selectedMonth, setAvailableMonths, setSelectedMonth]);
+
+  // Calculate the reference date dynamically based on the latest date in daily sales for the active month
+  const referenceDateString = useMemo(() => {
+    const activeMonth = selectedMonth || (calculatedAvailableMonths[0] || "2026-05");
+    let maxDate = new Date(`${activeMonth}-01`);
+    if (isDemo || !initialData) {
+      maxDate = new Date("2026-05-25");
+    } else {
+      const { dailySales } = initialData;
+      const monthlyDaily = (dailySales || []).filter((d: any) => d.sales_date && d.sales_date.startsWith(activeMonth));
+      if (monthlyDaily.length > 0) {
+        const dates = monthlyDaily.map((d: any) => new Date(d.sales_date).getTime());
+        maxDate = new Date(Math.max(...dates));
+      } else {
+        maxDate = new Date(`${activeMonth}-01`);
+      }
+    }
+    return `${maxDate.getFullYear()}년 ${maxDate.getMonth() + 1}월 ${maxDate.getDate()}일`;
+  }, [isDemo, initialData, selectedMonth, calculatedAvailableMonths]);
+
+  useEffect(() => {
+    setReferenceDate(referenceDateString);
+  }, [referenceDateString, setReferenceDate]);
+
+  const activeMonth = selectedMonth || (calculatedAvailableMonths[0] || "2026-05");
+  const [activeYearStr, activeMonthStr] = activeMonth.split("-");
+
+
+  // Helper formatting functions
+  const formatNumber = (num: number | string) => {
+    if (typeof num === "string") return num;
+    return new Intl.NumberFormat("ko-KR").format(Math.round(num)) + "원";
+  };
+
+  const formatNumberShort = (num: number) => {
+    return (num / 1000000).toFixed(1) + "M";
+  };
+
+  // ========================================================
+  // 0. ALL MARKETERS LIST FOR BUTTONS (Sorted by team sales)
+  // ========================================================
+  const allMarketersList = useMemo(() => {
+    if (isDemo || !initialData || !initialData.marketers) {
+      return [
+        { name: "정태수" },
+        { name: "정태민" },
+        { name: "심재용" },
+        { name: "정윤지" },
+        { name: "신희진" },
+        { name: "김정환" },
+        { name: "장평화" },
+        { name: "권지원" },
+      ];
+    }
+    const { marketers, dailySales } = initialData;
+    return (marketers || [])
+      .map((m: any) => {
+        const mSales = (dailySales || [])
+          .filter((s: any) => s.marketer_id === m.id)
+          .reduce((sum: number, s: any) => sum + Number(s.amount || 0), 0);
+        return { ...m, sales: mSales };
+      })
+      .sort((a: any, b: any) => b.sales - a.sales);
+  }, [isDemo, initialData]);
+
+  // ========================================================
+  // HTML DOWNLOAD HANDLER (Interactive - all marketers in one file)
+  // ========================================================
+  const handleDownloadHTML = useCallback(async () => {
+    if (!reportRef.current) return;
+    setIsCapturing(true);
+
+    // 1. Collect all stylesheets from the page
+    let allCSS = "";
+    try {
+      for (const sheet of Array.from(document.styleSheets)) {
+        try {
+          for (const rule of Array.from(sheet.cssRules)) {
+            allCSS += rule.cssText + "\n";
+          }
+        } catch {
+          // Skip cross-origin stylesheets
+        }
+      }
+    } catch {
+      // Fallback: no styles
+    }
+
+    // 2. Define all tabs to capture
+    const tabs = [
+      { key: "all", label: "전체 3팀" },
+      ...allMarketersList.map((m: any) => ({ key: m.name, label: m.name }))
+    ];
+
+    const sections: { key: string; label: string; html: string }[] = [];
+    const originalMarketer = selectedMarketer;
+
+    // 3. Sequentially capture each marketer's rendered report
+    for (const tab of tabs) {
+      flushSync(() => {
+        setSelectedMarketer(tab.key);
+      });
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+      );
+
+      const clone = reportRef.current!.cloneNode(true) as HTMLElement;
+      clone.querySelectorAll("[data-html-hide]").forEach((el) => el.remove());
+      sections.push({ key: tab.key, label: tab.label, html: clone.outerHTML });
+    }
+
+    // 4. Restore original selection
+    flushSync(() => {
+      setSelectedMarketer(originalMarketer);
+    });
+    setIsCapturing(false);
+
+    // 5. Build tab buttons HTML
+    const tabButtonsHTML = tabs
+      .map(
+        (t, i) =>
+          `<button class="tab-btn${i === 0 ? " active" : ""}" data-tab-idx="${i}" onclick="switchTab(this, ${i})">${t.label}</button>`
+      )
+      .join("\n        ");
+
+    // 6. Build sections HTML
+    const sectionsHTML = sections
+      .map(
+        (s, i) =>
+          `<div id="report-section-${i}" class="report-section" style="display:${i === 0 ? "block" : "none"}">${s.html}</div>`
+      )
+      .join("\n  ");
+
+    // 7. Build final interactive HTML
+    const today = new Date();
+    const dateStr = `${today.getFullYear()}${String(today.getMonth() + 1).padStart(2, "0")}${String(today.getDate()).padStart(2, "0")}`;
+    const fileName = `3팀_KPI_보고서_인터랙티브_${dateStr}.html`;
+
+    const html = `<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3팀 영업 현황 및 매출 지표 종합 분석 보고서</title>
+  <style>
+    ${allCSS}
+    @media print {
+      body { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+      .interactive-tab-nav { display: none !important; }
+      .report-container { max-width: 100% !important; padding: 0 !important; }
+    }
+    body {
+      font-family: 'Pretendard', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+      margin: 0;
+      padding: 0;
+      background: #f1f5f9;
+      display: block !important;
+    }
+    .report-container {
+      max-width: 960px;
+      margin: 0 auto;
+      padding: 24px 40px 40px;
+      background: #ffffff;
+      min-height: 100vh;
+      box-shadow: 0 0 40px rgba(0,0,0,0.06);
+    }
+    .interactive-tab-nav {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: linear-gradient(135deg, #1e3a8a 0%, #1e40af 100%);
+      padding: 16px 24px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      box-shadow: 0 4px 20px rgba(30,58,138,0.25);
+    }
+    .interactive-tab-nav .nav-label {
+      font-weight: 700;
+      color: #ffffff;
+      font-size: 0.95rem;
+      margin-right: 12px;
+      white-space: nowrap;
+    }
+    .tab-btn {
+      padding: 7px 16px;
+      font-size: 0.82rem;
+      border: 1px solid rgba(255,255,255,0.3);
+      border-radius: 20px;
+      cursor: pointer;
+      background: rgba(255,255,255,0.1);
+      color: #e2e8f0;
+      font-weight: 600;
+      transition: all 0.2s ease;
+      backdrop-filter: blur(4px);
+    }
+    .tab-btn:hover {
+      background: rgba(255,255,255,0.25);
+      color: #ffffff;
+      border-color: rgba(255,255,255,0.5);
+    }
+    .tab-btn.active {
+      background: #ffffff;
+      color: #1e3a8a;
+      border-color: #ffffff;
+      font-weight: 700;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    }
+  </style>
+</head>
+<body>
+  <div class="interactive-tab-nav">
+    <span class="nav-label">\ud83d\udc64 \ub9c8\ucf00\ud130 \ud544\ud130\ub9c1</span>
+    ${tabButtonsHTML}
+  </div>
+  <div class="report-container">
+    ${sectionsHTML}
+  </div>
+  <script>
+    function switchTab(btn, idx) {
+      document.querySelectorAll('.report-section').forEach(function(el) { el.style.display = 'none'; });
+      document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+      document.getElementById('report-section-' + idx).style.display = 'block';
+      btn.classList.add('active');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  </script>
+</body>
+</html>`;
+
+    // 8. Trigger download
+    const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = fileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [selectedMarketer, allMarketersList]);
+
+
+  // ========================================================
+  // 1. RAW DATA AGGREGATION & NORMALIZATION
+  // ========================================================
+  const stats = useMemo(() => {
+    // Standard mock data if running in Demo Mode
+    if (isDemo || !initialData) {
+      const mockMarketers = [
+        { name: "정태수", accounts: 235, sales: 138857627, target: 216512875, expected: 172183457, rate: 79.5, mediaMix: "네이버(50%), 지마켓(35%)", desc: "매출 1위 / 올라운더. 팀 내 최다 계정을 통제하며 안정적 매출 견인 중이나 당월 이탈 역시 최다인 상태로 리스크 케어 요망.", newCount: 1, transIn: 0, transOut: 8 },
+        { name: "정태민", accounts: 42, sales: 78958430, target: 79284315, expected: 97908453, rate: 123.5, mediaMix: "네이버 통합 (92%)", desc: "매출 2위 / 소수 정예형. 극단적 네이버 집중을 통해 계정당 단가를 극한으로 끌어올림.", newCount: 1, transIn: 0, transOut: 2 },
+        { name: "심재용", accounts: 58, sales: 53879561, target: 76184176, expected: 66810656, rate: 87.7, mediaMix: "지마켓(43%), 네이버(25%)", desc: "매출 3위 / 오픈마켓 특화. 에이블리 등 매체 확장 기여.", newCount: 2, transIn: 0, transOut: 2 },
+        { name: "정윤지", accounts: 111, sales: 42821033, target: 56572123, expected: 53098081, rate: 93.9, mediaMix: "지마켓(51%), 네이버(24%)", desc: "매출 4위 / 매체 확장형. 지마켓 통합 매체 기반 확보.", newCount: 1, transIn: 0, transOut: 1 },
+        { name: "신희진", accounts: 122, sales: 38879179, target: 68955725, expected: 48210182, rate: 69.9, mediaMix: "지마켓(48%), 11번가(27%)", desc: "매출 5위 / 다품종 대량형. 대량 세팅 운영, 리소스 최적화 필요.", newCount: 0, transIn: 0, transOut: 1 },
+        { name: "김정환", accounts: 102, sales: 35282435, target: 53245612, expected: 43750219, rate: 82.2, mediaMix: "네이버(29%), 카카오(19%)", desc: "매출 6위 / 영업 돌파형. 타 대행사 계정 딜(영업 이관) 능력 탁월.", newCount: 1, transIn: 4, transOut: 4 },
+        { name: "장평화", accounts: 63, sales: 33194711, target: 48687019, expected: 41161442, rate: 84.5, mediaMix: "네이버(55%), 지마켓(22%)", desc: "매출 7위 / 고효율 방어형. 견고한 방어력 보유.", newCount: 2, transIn: 0, transOut: 2 },
+        { name: "권지원", accounts: 11, sales: 9543926, target: 17292416, expected: 11834468, rate: 68.4, mediaMix: "네이버 통합 (99%)", desc: "매출 8위 / 전담 육성 단계. 매체 분산 및 스케일업 시급.", newCount: 0, transIn: 0, transOut: 0 },
+      ];
+
+      const totalSalesAll = mockMarketers.reduce((sum, m) => sum + m.sales, 0);
+
+      if (selectedMarketer === "all") {
+        return {
+          elapsedDays: 25,
+          totalDaysInMonth: 31,
+          totalSales: 431416902,
+          targetSales: 616734261,
+          expectedSales: 534956958,
+          liveAccounts: 744,
+          topLiveMarketer: "정태수 (235개)",
+          newAccounts: 6,
+          lostAccounts: 24,
+          historicalTrend: [
+            { label: "2월 확정", sales: 498755934, target: null, rate: "-", desc: "안정적인 5억 원 선 유지 구간" },
+            { label: "3월 확정", sales: 612901125, target: null, rate: "▲ 22.8%", desc: "상반기 최고점 달성, 전 매체 활성화 완료" },
+            { label: "4월 확정", sales: 570078905, target: null, rate: "▼ 7.0%", desc: "일부 매체 소폭 조정 및 안정화 단계" },
+            { label: "5월 목표", sales: 616734261, target: 616734261, rate: "-", desc: "3월 최고 실적을 상회하는 도전적 목표 설정" },
+            { label: "5월 예상", sales: 534956958, target: 616734261, rate: "달성률 86.7%", desc: "현재 일평균 스텝(1,725만 원) 기준 시 8,178만 원 부족 예상" },
+          ],
+          mediaShare: [
+            { media: "네이버", amount: 158376950, pct: 47.6, desc: "압도적 1위 매체" },
+            { media: "지마켓", amount: 115120380, pct: 34.6, desc: "오픈마켓 핵심" },
+            { media: "카카오", amount: 29944460, pct: 9.0, desc: "김정환 마케터 주력" },
+            { media: "에이블리/기타 매체", amount: 29274489, pct: 8.8, desc: "심재용/신희진 확장 중" },
+          ],
+          marketers: mockMarketers,
+          weeklyPattern: [
+            { day: "월요일", amount: 18538068, desc: "주간 시동 구간" },
+            { day: "화요일", amount: 18531318, desc: "상승세 유지" },
+            { day: "수요일", amount: 19574813, desc: "주 중반 방어" },
+            { day: "목요일", amount: 20078969, desc: "주간 최고점" },
+            { day: "금요일", amount: 16661434, desc: "소진 둔화" },
+            { day: "토요일", amount: 13717008, desc: "주간 최저점" },
+            { day: "일요일", amount: 15298892, desc: "주말 야간 회복" },
+          ],
+          advertisers: [
+            { rank: 1, name: "(주)웰템", marketer: "정태민", sales: 33424189 },
+            { rank: 2, name: "비제이커머스", marketer: "심재용", sales: 33006074 },
+            { rank: 3, name: "(주)아이ريس코리아", marketer: "정태민", sales: 15181701 },
+            { rank: 4, name: "Dailyon(데일리온)", marketer: "장평화", sales: 14027093 },
+            { rank: 5, name: "에스엠(S.M)인터내셔널", marketer: "정태수", sales: 13592353 },
+            { rank: 6, name: "주식회사 첵스톤", marketer: "정태수", sales: 12393217 },
+            { rank: 7, name: "이프텍주식회사", marketer: "정태민", sales: 12215378 },
+            { rank: 8, name: "대성웨빙", marketer: "정태수", sales: 10736579 },
+            { rank: 9, name: "주식회사 휴아코", marketer: "정태수", sales: 8519369 },
+            { rank: 10, name: "주식회사 메이드인코나", marketer: "정윤지", sales: 6641842 },
+          ],
+        };
+      } else {
+        const m = mockMarketers.find((x) => x.name === selectedMarketer) || mockMarketers[0];
+        const scale = totalSalesAll > 0 ? m.sales / totalSalesAll : 0.15;
+
+        const scaledTrend = [
+          { label: "2월 확정", sales: Math.round(498755934 * scale), target: null, rate: "-", desc: "안정적인 5억 원 선 유지 구간" },
+          { label: "3월 확정", sales: Math.round(612901125 * scale), target: null, rate: "▲ 22.8%", desc: "상반기 최고점 달성, 전 매체 활성화 완료" },
+          { label: "4월 확정", sales: Math.round(570078905 * scale), target: null, rate: "▼ 7.0%", desc: "일부 매체 소폭 조정 및 안정화 단계" },
+          { label: "5월 목표", sales: m.target, target: m.target, rate: "-", desc: "목표 대비 마감 시뮬레이션 기준점" },
+          { label: "5월 예상", sales: m.expected, target: m.target, rate: `달성률 ${m.rate}%`, desc: `현재 일평균 추이 감안 시 마감 전망` },
+        ];
+
+        const scaledMedia = [
+          { media: "네이버", amount: Math.round(m.sales * 0.50), pct: 50.0, desc: "주력 채널" },
+          { media: "지마켓", amount: Math.round(m.sales * 0.35), pct: 35.0, desc: "서브 채널" },
+          { media: "기타 매체", amount: Math.round(m.sales * 0.15), pct: 15.0, desc: "기타 채널" },
+        ];
+
+        const scaledWeekly = [
+          { day: "월요일", amount: Math.round(18538068 * scale), desc: "주간 시동 구간" },
+          { day: "화요일", amount: Math.round(18531318 * scale), desc: "상승세 유지" },
+          { day: "수요일", amount: Math.round(19574813 * scale), desc: "주 중반 방어" },
+          { day: "목요일", amount: Math.round(20078969 * scale), desc: "주간 최고점" },
+          { day: "금요일", amount: Math.round(16661434 * scale), desc: "소진 둔화" },
+          { day: "토요일", amount: Math.round(13717008 * scale), desc: "주간 최저점" },
+          { day: "일요일", amount: Math.round(15298892 * scale), desc: "주말 야간 회복" },
+        ];
+
+        const mockAdvertisers = [
+          { rank: 1, name: "(주)웰템", marketer: "정태민", sales: 33424189 },
+          { rank: 2, name: "비제이커머스", marketer: "심재용", sales: 33006074 },
+          { rank: 3, name: "(주)아이ريس코리아", marketer: "정태민", sales: 15181701 },
+          { rank: 4, name: "Dailyon(데일리온)", marketer: "장평화", sales: 14027093 },
+          { rank: 5, name: "에스엠(S.M)인터내셔널", marketer: "정태수", sales: 13592353 },
+          { rank: 6, name: "주식회사 첵스톤", marketer: "정태수", sales: 12393217 },
+          { rank: 7, name: "이프텍주식회사", marketer: "정태민", sales: 12215378 },
+          { rank: 8, name: "대성웨빙", marketer: "정태수", sales: 10736579 },
+          { rank: 9, name: "주식회사 휴아코", marketer: "정태수", sales: 8519369 },
+          { rank: 10, name: "주식회사 메이드인코나", marketer: "정윤지", sales: 6641842 },
+        ];
+
+        const filteredAdvs = mockAdvertisers
+          .filter((adv) => adv.marketer === selectedMarketer)
+          .sort((a, b) => b.sales - a.sales)
+          .map((a, idx) => ({ ...a, rank: idx + 1 }));
+
+        return {
+          elapsedDays: 25,
+          totalDaysInMonth: 31,
+          totalSales: m.sales,
+          targetSales: m.target,
+          expectedSales: m.expected,
+          liveAccounts: m.accounts,
+          topLiveMarketer: `${m.name} (${m.accounts}개)`,
+          newAccounts: m.newCount,
+          lostAccounts: m.transOut,
+          historicalTrend: scaledTrend,
+          mediaShare: scaledMedia,
+          marketers: mockMarketers,
+          weeklyPattern: scaledWeekly,
+          advertisers: filteredAdvs,
+        };
+      }
+    }
+
+    const { marketers, advertisers, dailySales, targets, advertiserSales } = initialData;
+
+    const activeMonth = selectedMonth || (calculatedAvailableMonths[0] || "2026-05");
+
+    // Filter base arrays for the selected month
+    const monthlyDailySales = (dailySales || []).filter((s: any) =>
+      s.sales_date && s.sales_date.startsWith(activeMonth)
+    );
+
+    const monthlyTargets = (targets || []).filter((t: any) =>
+      t.year_month && t.year_month.startsWith(activeMonth)
+    );
+
+    const monthlyAdvertiserSales = (advertiserSales || []).filter((s: any) =>
+      (s.start_date && s.start_date.startsWith(activeMonth)) ||
+      (s.end_date && s.end_date.startsWith(activeMonth))
+    );
+
+    // 1. Calculate active date reference for the active month
+    let maxDate = new Date(`${activeMonth}-01`);
+    if (monthlyDailySales.length > 0) {
+      const dates = monthlyDailySales.map((d: any) => new Date(d.sales_date).getTime());
+      maxDate = new Date(Math.max(...dates));
+    }
+    const elapsedDays = maxDate.getDate();
+    const totalDaysInMonth = new Date(maxDate.getFullYear(), maxDate.getMonth() + 1, 0).getDate();
+
+    // Prepare arrays for filtering by marketer
+    const selectedMarketerObj = marketers?.find((m: any) => m.name === selectedMarketer);
+    const selectedMarketerId = selectedMarketerObj?.id;
+    const isFiltered = selectedMarketer !== "all";
+
+    // Filter bases for overall statistics if selected
+    const filteredDailySales = isFiltered && selectedMarketerId
+      ? monthlyDailySales.filter((s: any) => s.marketer_id === selectedMarketerId)
+      : monthlyDailySales;
+
+    const filteredTargets = isFiltered && selectedMarketerId
+      ? monthlyTargets.filter((t: any) => t.marketer_id === selectedMarketerId)
+      : monthlyTargets;
+
+    const filteredAdvertiserSales = isFiltered && selectedMarketerId
+      ? monthlyAdvertiserSales.filter((s: any) => s.advertisers?.marketer_id === selectedMarketerId)
+      : monthlyAdvertiserSales;
+
+    // 2. Fetch Total Sales
+    const totalSales = filteredDailySales.reduce((sum: number, d: any) => sum + Number(d.amount || 0), 0);
+
+    // 3. Fetch Total Targets
+    const currentTargets = filteredTargets.filter((t: any) => t.year_month === `${activeMonth}-01`);
+    
+    // Default fallback target calculations (only fallback for May 2026, others default to 0)
+    const defaultTarget = (activeMonth === "2026-05" && !isFiltered) ? 616734261 : 0;
+    const targetSales = currentTargets.reduce((sum: number, t: any) => sum + Number(t.target_amount || 0), 0) || defaultTarget;
+
+    // 4. Calculate projections
+    const dailyAvg = elapsedDays > 0 ? totalSales / elapsedDays : 0;
+    const expectedSales = dailyAvg * totalDaysInMonth;
+
+    // 5. Total live accounts in active month – count unique advertisers from monthlyAdvertiserSales
+    const liveAdvertisersByMarketer = new Map<string, Set<string>>();
+    const filteredAdvSalesForLive = isFiltered && selectedMarketerId
+      ? monthlyAdvertiserSales.filter((s: any) => s.advertisers?.marketer_id === selectedMarketerId)
+      : monthlyAdvertiserSales;
+
+    filteredAdvSalesForLive.forEach((s: any) => {
+      const mId = s.advertisers?.marketer_id;
+      const advId = s.advertiser_id;
+      if (mId && advId) {
+        if (!liveAdvertisersByMarketer.has(mId)) liveAdvertisersByMarketer.set(mId, new Set());
+        liveAdvertisersByMarketer.get(mId)!.add(advId);
+      }
+    });
+
+    let totalLive = 0;
+    liveAdvertisersByMarketer.forEach((advSet) => { totalLive += advSet.size; });
+
+    // Find marketer with most accounts
+    let topLiveMarketerName = "";
+    let topLiveCount = 0;
+    liveAdvertisersByMarketer.forEach((advSet, mId) => {
+      const mName = marketers?.find((mk: any) => mk.id === mId)?.name || "";
+      if (advSet.size > topLiveCount) {
+        topLiveCount = advSet.size;
+        topLiveMarketerName = mName;
+      }
+    });
+
+    // 7. Parse historical sales
+    const getHistoricalAmount = (dateStr: string) => {
+      return (isFiltered && selectedMarketerId
+        ? (targets || []).filter((t: any) => t.marketer_id === selectedMarketerId)
+        : (targets || []))
+        .filter((t: any) => t.year_month === dateStr)
+        .reduce((sum: number, t: any) => sum + Number(t.actual_sales_amount || 0), 0);
+    };
+
+    const getHistoricalTarget = (dateStr: string) => {
+      return (isFiltered && selectedMarketerId
+        ? (targets || []).filter((t: any) => t.marketer_id === selectedMarketerId)
+        : (targets || []))
+        .filter((t: any) => t.year_month === dateStr)
+        .reduce((sum: number, t: any) => sum + Number(t.target_amount || 0), 0);
+    };
+
+    const getFallbackAmount = (dateStr: string) => {
+      if (isFiltered) return 0;
+      const fallbacks: Record<string, number> = {
+        "2026-01-01": 585015988,
+        "2026-02-01": 498755934,
+        "2026-03-01": 612901125,
+        "2026-04-01": 570078905,
+      };
+      return fallbacks[dateStr] || 0;
+    };
+
+    const getFallbackTarget = (dateStr: string) => {
+      if (isFiltered) return 0;
+      const fallbacks: Record<string, number> = {
+        "2026-04-01": 570078905,
+      };
+      return fallbacks[dateStr] || 0;
+    };
+
+    const dateM3 = getPrecedingDateStr(activeMonth, 3);
+    const dateM2 = getPrecedingDateStr(activeMonth, 2);
+    const dateM1 = getPrecedingDateStr(activeMonth, 1);
+
+    const salesM3 = getHistoricalAmount(dateM3) || getFallbackAmount(dateM3);
+    const salesM2 = getHistoricalAmount(dateM2) || getFallbackAmount(dateM2);
+    const salesM1 = getHistoricalAmount(dateM1) || getFallbackAmount(dateM1);
+
+    const targetM1 = getHistoricalTarget(dateM1) || getFallbackTarget(dateM1);
+
+    const rateM2 = salesM3 > 0 ? ((salesM2 - salesM3) / salesM3) * 100 : 0;
+    const rateM1 = salesM2 > 0 ? ((salesM1 - salesM2) / salesM2) * 100 : 0;
+
+    const labelM3 = `${parseInt(dateM3.split("-")[1], 10)}월 확정`;
+    const labelM2 = `${parseInt(dateM2.split("-")[1], 10)}월 확정`;
+    const labelM1 = `${parseInt(dateM1.split("-")[1], 10)}월 확정`;
+    const labelM_Target = `${parseInt(activeMonth.split("-")[1], 10)}월 목표`;
+    const labelM_Expected = `${parseInt(activeMonth.split("-")[1], 10)}월 예상`;
+
+    const historicalTrend = [
+      {
+        label: labelM3,
+        sales: salesM3,
+        target: null,
+        rate: "-",
+        desc: "안정적인 매출 유지 구간",
+      },
+      {
+        label: labelM2,
+        sales: salesM2,
+        target: null,
+        rate: (isFiltered && salesM3 === 0) ? "-" : `${rateM2 >= 0 ? "▲" : "▼"} ${Math.abs(rateM2).toFixed(1)}%`,
+        desc: "매체 다각화 및 실적 활성화 단계",
+      },
+      {
+        label: labelM1,
+        sales: salesM1,
+        target: targetM1 || null,
+        rate: (isFiltered && salesM2 === 0) ? "-" : `${rateM1 >= 0 ? "▲" : "▼"} ${Math.abs(rateM1).toFixed(1)}%`,
+        desc: "전월 매출 안정화 및 관리 단계",
+      },
+      {
+        label: labelM_Target,
+        sales: targetSales,
+        target: targetSales,
+        rate: "-",
+        desc: "성장세를 이어가기 위한 당월 목표 설정",
+      },
+      {
+        label: labelM_Expected,
+        sales: expectedSales,
+        target: targetSales,
+        rate: targetSales > 0 ? `달성률 ${((expectedSales / targetSales) * 100).toFixed(1)}%` : "0.0%",
+        desc: targetSales > 0
+          ? `현재 일평균 스텝(${formatNumberShort(dailyAvg)}) 기준 시 ${(targetSales - expectedSales > 0 ? formatNumber(targetSales - expectedSales) : "0원")} 부족 예상`
+          : `현재 일평균 스텝: ${formatNumber(dailyAvg)}`,
+      },
+    ];
+
+    // 8. Media Share
+    const mediaMap = new Map<string, number>();
+    filteredDailySales.forEach((s: any) => {
+      const name = s.media?.name || "기타";
+      mediaMap.set(name, (mediaMap.get(name) || 0) + Number(s.amount || 0));
+    });
+
+    const mediaShare = Array.from(mediaMap.entries())
+      .map(([media, amount]) => {
+        const pct = totalSales > 0 ? (amount / totalSales) * 100 : 0;
+        return {
+          media,
+          amount,
+          pct: Math.round(pct * 10) / 10,
+          desc: media === "네이버" ? "압도적 1위 매체" : media === "지마켓" ? "오픈마켓 핵심" : "영업 실적 매체",
+        };
+      })
+      .sort((a, b) => b.amount - a.amount);
+
+    // 9. Marketer Performance (Always computed on ALL marketers to keep full listing valid)
+    const activeTargetsDate = `${activeMonth}-01`;
+    const rawMonthTargets = targets.filter((t: any) => t.year_month === activeTargetsDate);
+    const parsedMarketers = marketers.map((m: any) => {
+      // Get selected month daily sales sum from RAW daily sales
+      const mSales = (dailySales || [])
+        .filter((s: any) => s.marketer_id === m.id && s.sales_date && s.sales_date.startsWith(activeMonth))
+        .reduce((sum: number, s: any) => sum + Number(s.amount || 0), 0);
+
+      // Get target details
+      const mTargets = rawMonthTargets.filter((t: any) => t.marketer_id === m.id);
+      const mTarget = mTargets.reduce((sum: number, t: any) => sum + Number(t.target_amount || 0), 0);
+      
+      // Count unique advertisers for this marketer from advertiserSales in the active month
+      const mAdvSet = new Set<string>();
+      (advertiserSales || []).forEach((s: any) => {
+        const isInMonth = (s.start_date && s.start_date.startsWith(activeMonth)) || (s.end_date && s.end_date.startsWith(activeMonth));
+        if (s.advertisers?.marketer_id === m.id && s.advertiser_id && isInMonth) {
+          mAdvSet.add(s.advertiser_id);
+        }
+      });
+      const mLive = mAdvSet.size;
+      const mNew = mTargets.reduce((sum: number, t: any) => sum + Number(t.new_accounts_count || 0), 0);
+      const mTransIn = mTargets.reduce((sum: number, t: any) => sum + Number(t.transferred_in_count || 0), 0);
+      const mTransOut = mTargets.reduce((sum: number, t: any) => sum + Number(t.transferred_out_count || 0), 0);
+
+      // Calculate projection
+      const mExpected = (mSales / elapsedDays) * totalDaysInMonth;
+      const mRate = mTarget > 0 ? (mExpected / mTarget) * 100 : 0;
+
+      // Calculate dynamic media percentages for the active month
+      const mMediaSalesMap = new Map<string, number>();
+      (dailySales || [])
+        .filter((s: any) => s.marketer_id === m.id && s.sales_date && s.sales_date.startsWith(activeMonth))
+        .forEach((s: any) => {
+          const name = s.media?.name || "기타";
+          mMediaSalesMap.set(name, (mMediaSalesMap.get(name) || 0) + Number(s.amount || 0));
+        });
+
+      const mMediaShares = Array.from(mMediaSalesMap.entries())
+        .map(([name, val]) => ({ name, val }))
+        .sort((a, b) => b.val - a.val);
+
+      let mediaMix = "기타(100%)";
+      if (mMediaShares.length > 0) {
+        mediaMix = mMediaShares
+          .slice(0, 2)
+          .map((ms) => `${ms.name}(${mSales > 0 ? Math.round((ms.val / mSales) * 100) : 0}%)`)
+          .join(", ");
+      }
+
+      const originalDescs: Record<string, string> = {
+        정태수: "매출 1위 / 올라운더. 팀 내 최다 계정을 통제하며 안정적 매출 견인 중이나 당월 이탈 역시 최다인 상태로 리스크 케어 요망.",
+        정태민: "매출 2위 / 소수 정예형. 극단적 네이버 집중을 통해 계정당 단가를 극한으로 끌어올림.",
+        심재용: "매출 3위 / 오픈마켓 특화. 에이블리 등 매체 확장 기여.",
+        정윤지: "매출 4위 / 매체 확장형. 지마켓 통합 매체 기반 확보.",
+        신희진: "매출 5위 / 다품종 대량형. 대량 세팅 운영, 리소스 최적화 필요.",
+        김정환: "매출 6위 / 영업 돌파형. 타 대행사 계정 딜(영업 이관) 능력 탁월.",
+        장평화: "매출 7위 / 고효율 방어형. 견고한 방어력 보유.",
+        권지원: "매출 8위 / 전담 육성 단계. 매체 분산 및 스케일업 시급.",
+      };
+
+      return {
+        name: m.name,
+        accounts: mLive,
+        sales: mSales,
+        target: mTarget,
+        expected: Math.round(mExpected),
+        rate: Math.round(mRate * 10) / 10,
+        mediaMix,
+        desc: originalDescs[m.name] || `${m.name} 마케터 실적 데이터`,
+        newCount: mNew,
+        transIn: mTransIn,
+        transOut: mTransOut,
+      };
+    }).sort((a: any, b: any) => b.sales - a.sales);
+
+    // Dynamic counts (based on filtered marketers if filtered, or team total)
+    const activeMarketerObjs = isFiltered ? parsedMarketers.filter((m: any) => m.name === selectedMarketer) : parsedMarketers;
+    const newAccounts = activeMarketerObjs.reduce((sum: number, m: any) => sum + m.newCount, 0);
+    const lostAccounts = activeMarketerObjs.reduce((sum: number, m: any) => sum + m.transOut, 0);
+
+    // 10. Weekly patterns
+    const dayNames = ["일요일", "월요일", "화요일", "수요일", "목요일", "금요일", "토요일"];
+    const weeklyTotals = new Map<string, number>();
+    const weeklyDates = new Map<string, Set<string>>();
+
+    dayNames.forEach((d) => {
+      weeklyTotals.set(d, 0);
+      weeklyDates.set(d, new Set<string>());
+    });
+
+    filteredDailySales.forEach((s: any) => {
+      if (!s.sales_date) return;
+      const dateStr = typeof s.sales_date === "string" ? s.sales_date.substring(0, 10) : "";
+      if (!dateStr) return;
+      
+      const date = new Date(dateStr);
+      const name = dayNames[date.getDay()];
+      
+      weeklyTotals.set(name, (weeklyTotals.get(name) || 0) + Number(s.amount || 0));
+      weeklyDates.get(name)!.add(dateStr);
+    });
+
+    const tempPattern = Array.from(weeklyTotals.entries()).map(([day, totalSum]) => {
+      const occurrences = weeklyDates.get(day)!.size;
+      const avg = occurrences > 0 ? Math.round(totalSum / occurrences) : 0;
+      return {
+        day,
+        amount: avg,
+        desc: "소진 방어선",
+      };
+    });
+
+    let maxDay = "";
+    let minDay = "";
+    let maxVal = -1;
+    let minVal = Infinity;
+
+    tempPattern.forEach((w) => {
+      if (w.amount > maxVal) {
+        maxVal = w.amount;
+        maxDay = w.day;
+      }
+      if (w.amount < minVal) {
+        minVal = w.amount;
+        minDay = w.day;
+      }
+    });
+
+    const weeklyAvg = tempPattern.reduce((sum, w) => sum + w.amount, 0) / 7;
+
+    const weeklyPattern = tempPattern.map((w) => {
+      let desc = "소진 방어선";
+      if (w.day === maxDay && w.amount > 0) {
+        desc = "주간 최고점";
+      } else if (w.day === minDay && w.amount > 0) {
+        desc = "주간 최저점";
+      } else if (w.day === "월요일") {
+        desc = "주간 시동 구간";
+      } else if (w.day === "화요일") {
+        desc = "상승세 유지";
+      } else if (w.day === "수요일") {
+        desc = "주 중반 방어";
+      } else if (w.day === "목요일") {
+        desc = w.amount >= weeklyAvg ? "평균 스텝 상회" : "평균 스텝 하회";
+      } else if (w.day === "금요일") {
+        desc = "소진 둔화";
+      } else if (w.day === "일요일") {
+        desc = "주말 야간 회복";
+      }
+      return {
+        ...w,
+        desc,
+      };
+    });
+
+    const order = ["월요일", "화요일", "수요일", "목요일", "금요일", "토요일", "일요일"];
+    weeklyPattern.sort((a, b) => order.indexOf(a.day) - order.indexOf(b.day));
+
+    // 11. Top 10 Advertisers (Grouped by normalized name)
+    const advertiserSalesMap = new Map<string, { name: string; marketer: string; sales: number }>();
+    filteredAdvertiserSales.forEach((s: any) => {
+      const advName = s.advertisers?.name;
+      if (!advName) return;
+
+      const normalizedName = advName.trim().replace(/\s+/g, "");
+      const mapKey = normalizedName.toLowerCase();
+      
+      const mName = marketers.find((mk: any) => mk.id === s.advertisers?.marketer_id)?.name || "미지정";
+      const amount = Number(s.amount || 0);
+
+      if (!advertiserSalesMap.has(mapKey)) {
+        advertiserSalesMap.set(mapKey, { name: advName.trim(), marketer: mName, sales: 0 });
+      }
+      advertiserSalesMap.get(mapKey)!.sales += amount;
+    });
+
+    const advertisersTop10 = Array.from(advertiserSalesMap.values())
+      .sort((a, b) => b.sales - a.sales)
+      .slice(0, 10)
+      .map((item, idx) => ({
+        rank: idx + 1,
+        ...item,
+      }));
+
+    return {
+      elapsedDays,
+      totalDaysInMonth,
+      totalSales,
+      targetSales,
+      expectedSales,
+      liveAccounts: totalLive,
+      topLiveMarketer: topLiveMarketerName ? `${topLiveMarketerName} (${topLiveCount}개)` : "-",
+      newAccounts,
+      lostAccounts,
+      historicalTrend,
+      mediaShare,
+      marketers: parsedMarketers,
+      weeklyPattern,
+      advertisers: advertisersTop10,
+    };
+  }, [isDemo, initialData, selectedMarketer, selectedMonth, calculatedAvailableMonths]);
+
+
+  // ========================================================
+  // 2. FILTERING & FILTERED STATES
+  // ========================================================
+  const filteredMarketersList = useMemo(() => {
+    if (selectedMarketer === "all") return stats.marketers;
+    return stats.marketers.filter((m: any) => m.name === selectedMarketer);
+  }, [selectedMarketer, stats.marketers]);
+
+  const filteredAdvertisersList = useMemo(() => {
+    return stats.advertisers.filter((adv: any) => {
+      const matchesMarketer = selectedMarketer === "all" || adv.marketer === selectedMarketer;
+      const matchesSearch =
+        adv.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        adv.marketer.toLowerCase().includes(searchQuery.toLowerCase());
+      return matchesMarketer && matchesSearch;
+    });
+  }, [selectedMarketer, searchQuery, stats.advertisers]);
+
+  const activeKPI = useMemo(() => {
+    if (selectedMarketer === "all") {
+      const totalTransIn = stats.marketers.reduce((sum: number, m: any) => sum + (m.transIn || 0), 0);
+      return {
+        sales: stats.totalSales,
+        rate: ((stats.totalSales / stats.targetSales) * 100).toFixed(1),
+        expected: stats.expectedSales,
+        expectedRate: ((stats.expectedSales / stats.targetSales) * 100).toFixed(1),
+        live: stats.liveAccounts,
+        topLive: stats.topLiveMarketer,
+        new: stats.newAccounts + totalTransIn,
+        lost: stats.lostAccounts,
+      };
+    }
+    const m = stats.marketers.find((m: any) => m.name === selectedMarketer);
+    if (!m) {
+      return {
+        sales: 0,
+        rate: "0.0",
+        expected: 0,
+        expectedRate: "0.0",
+        live: 0,
+        topLive: "-",
+        new: 0,
+        lost: 0,
+      };
+    }
+    return {
+      sales: m.sales,
+      rate: m.target > 0 ? ((m.sales / m.target) * 100).toFixed(1) : "0.0",
+      expected: m.expected,
+      expectedRate: m.rate.toFixed(1),
+      live: m.accounts,
+      topLive: `${m.name} (${m.accounts}개)`,
+      new: m.newCount + (m.transIn || 0),
+      lost: m.transOut,
+    };
+  }, [selectedMarketer, stats]);
+
+  // ========================================================
+  // 3. DYNAMIC INSIGHTS ENGINE
+  // ========================================================
+  const dynamicRiskGuide = useMemo(() => {
+    const activeMonth = selectedMonth || (calculatedAvailableMonths[0] || "2026-05");
+    const activeMonthNum = parseInt(activeMonth.split("-")[1], 10);
+
+    if (selectedMarketer === "all") {
+      const shortfall = stats.targetSales - stats.expectedSales;
+      const dailyAvg = stats.totalSales / stats.elapsedDays;
+      const requiredDaily = (stats.targetSales - stats.totalSales) / (stats.totalDaysInMonth - stats.elapsedDays);
+      const percentageIncrease = Math.round(((requiredDaily - dailyAvg) / dailyAvg) * 100);
+
+      if (shortfall > 0) {
+        return `남은 ${activeMonthNum}월 일정 동안 목표액을 100% 채우기 위해서는 현재 일평균 매출을 <b>${formatNumber(dailyAvg).replace("원", "")}원</b>에서 <b>${formatNumber(requiredDaily).replace("원", "")}원</b> 수준으로 약 <b>${percentageIncrease}% 가량 홀딩 볼륨을 리프트업</b>해야 합니다. 월말 집중 예산 증액 딜을 추진하거나 타 대행사 이관 계정의 세팅 속도를 긴급 단축시켜야 하는 시점입니다.`;
+      } else {
+        return `현재 일평균 매출 추이(<b>${formatNumber(dailyAvg).replace("원", "")}원</b>)가 우수하여 ${activeMonthNum}월 마감 목표액을 안정적으로 돌파할 것으로 시뮬레이션되었습니다. 추가 리포지셔닝 없이 현 매출 볼륨을 견고히 방어하는 마감 가이드라인을 유지해 주십시오.`;
+      }
+    } else {
+      const m = stats.marketers.find((mk: any) => mk.name === selectedMarketer);
+      if (!m) return "";
+      const mShortfall = m.target - m.expected;
+      const mDailyAvg = m.sales / stats.elapsedDays;
+      const mRequired = (m.target - m.sales) / (stats.totalDaysInMonth - stats.elapsedDays);
+      const pct = mDailyAvg > 0 ? Math.round(((mRequired - mDailyAvg) / mDailyAvg) * 100) : 0;
+
+      if (mShortfall > 0) {
+        return `<b>${m.name} 마케터</b>의 남은 일정 목표 달성을 위해서는 일평균 매출을 <b>${formatNumber(mDailyAvg).replace("원", "")}원</b>에서 <b>${formatNumber(mRequired).replace("원", "")}원</b> 수준으로 약 <b>${pct}% 리프트업</b>해야 합니다. 주력 매체 비중 조절과 이탈 방어에 집중해야 하는 구간입니다.`;
+      } else {
+        return `<b>${m.name} 마케터</b>는 현재 목표 달성률 <b>${m.rate}%</b>로 마감 예상을 상회하는 고효율 성과 구간에 안착해 있습니다. 타 매체 확장을 통한 추가 마진 확보 전략을 모색하십시오.`;
+      }
+    }
+  }, [selectedMarketer, stats, selectedMonth, calculatedAvailableMonths]);
+
+  const dynamicClosingStrategy = useMemo(() => {
+    const activeMonth = selectedMonth || (calculatedAvailableMonths[0] || "2026-05");
+    const activeMonthNum = parseInt(activeMonth.split("-")[1], 10);
+
+    const topAdv = stats.advertisers[0];
+    const secondAdv = stats.advertisers[1];
+    const topName = topAdv?.name || "";
+    const secondName = secondAdv?.name || "";
+
+    if (selectedMarketer !== "all") {
+      const m = stats.marketers.find((mk: any) => mk.name === selectedMarketer);
+      if (!m) return "";
+      let strategy = `<b>${m.name} 마케터</b>는 현재 ${activeMonthNum}월 목표 대비 예상 달성률 <b>${m.rate}%</b>를 기록 중입니다. `;
+      if (topName) {
+        strategy += `주요 관리 계정인 <b>${topName}</b>${secondName ? `, <b>${secondName}</b>` : ""}의 매출 추이를 면밀히 모니터링하여 이탈을 방지하는 것이 최우선 과제입니다. `;
+      }
+      strategy += `매출 활성화를 위해 금~토 주말 최저점 소진 구간에 대응하는 매체별 맞춤형 타임 프로모션을 정비하고 광고주 예산 최적화를 유도하시기 바랍니다.`;
+      return strategy;
+    }
+
+    const topMarketer = topAdv?.marketer || "심재용";
+    const secondMarketer = secondAdv?.marketer || "정태민";
+    return `최상위 우량 계정인 <b>${topName || "비제이커머스"}</b>와 <b>${secondName || "(주)웰템"}</b>은 각 담당 마케터(<b>${topMarketer}</b>, <b>${secondMarketer}</b>)의 집중 관리를 통해 안정적인 매출 리딩을 수행 중입니다. 매출 안정화를 위해 주말 최저점 구간(금~토)에 대응하는 오픈마켓 타임 딜 프로모션을 정비하고, 신희진 마케터 등 달성률이 다소 부진한 인원의 계정을 고단가 중심으로 재조율한다면 ${activeMonthNum}월 후반부 목표액 달성에 긍정적일 것으로 사료됩니다.`;
+  }, [stats, selectedMarketer, selectedMonth, calculatedAvailableMonths]);
+
+  // ========================================================
+  // 4. CHART SVG COORDINATES GENERATION
+  // ========================================================
+  const svgCoords = useMemo(() => {
+    const salesValues = stats.historicalTrend.map((item: any) => item.sales);
+    if (stats.targetSales) salesValues.push(stats.targetSales);
+    
+    const actualMax = Math.max(...salesValues, 0);
+    const actualMin = Math.min(...salesValues.filter((v: number) => v > 0), 0);
+    
+    let minVal = actualMin * 0.9;
+    let maxVal = actualMax * 1.1;
+    
+    if (maxVal === 0) {
+      minVal = 0;
+      maxVal = 100000000;
+    }
+    if (maxVal - minVal < 100000) {
+      maxVal = minVal + 1000000;
+    }
+
+    const minY = 180;
+    const maxY = 40;
+
+    const getY = (val: number) => {
+      if (val < minVal) return minY;
+      if (val > maxVal) return maxY;
+      return minY - ((val - minVal) / (maxVal - minVal)) * (minY - maxY);
+    };
+
+    const len = stats.historicalTrend.length;
+    const targetIdx = len - 2;
+    const expectedIdx = len - 1;
+
+    const points = stats.historicalTrend.map((item: any, idx: number) => {
+      let x = 150;
+      if (idx === expectedIdx || idx === targetIdx) {
+        x = 690;
+      } else {
+        x = 150 + idx * 180;
+      }
+      const y = getY(item.sales);
+      return { x, y, label: item.sales, name: item.label };
+    });
+
+    const targetPoint = {
+      x: 690,
+      y: getY(stats.targetSales),
+      label: stats.targetSales,
+    };
+
+    return { points, targetPoint, minVal, maxVal, targetIdx, expectedIdx };
+  }, [stats]);
+
+  return (
+    <div ref={reportRef} className="animate-fade-in" style={{ backgroundColor: "#ffffff", padding: "10px", borderRadius: "8px" }}>
+      
+      {/* Demo Mode Notification */}
+      {isDemo && (
+        <div
+          className="report-insight-box warning"
+          style={{ marginBottom: "20px", display: "flex", justifyContent: "space-between", alignItems: "center" }}
+        >
+          <div>
+            <div className="report-insight-title" style={{ fontSize: "1.1rem" }}>📢 데이터 가동 모드안내 (데모 버전)</div>
+            현재 Supabase 데이터베이스에 등록된 파일 내역이 없습니다. 실제 데이터를 조회하려면{" "}
+            <Link href="/upload" style={{ color: "#2563eb", fontWeight: "bold", textDecoration: "underline" }}>
+              [엑셀 데이터 업로드]
+            </Link>{" "}
+            화면에서 파일을 올려 주십시오.
+          </div>
+        </div>
+      )}
+
+      {/* Marketer Quick Filters + Download */}
+      <div
+        data-html-hide
+        className="card"
+        style={{
+          position: "sticky",
+          top: "-32px",
+          zIndex: 50,
+          marginBottom: "25px",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          flexWrap: "wrap",
+          gap: "16px",
+          padding: "16px 20px",
+          backgroundColor: "#f8fafc",
+          border: "1px solid #e2e8f0",
+          boxShadow: "0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -4px rgba(0, 0, 0, 0.05)",
+        }}
+      >
+        <div>
+          <h3 style={{ fontSize: "1.05rem", fontWeight: 700, color: "#1e3a8a", marginBottom: "4px" }}>👤 마케터 필터링</h3>
+          <p style={{ fontSize: "0.8rem", color: "#64748b" }}>원하는 마케터를 선택하여 실적 수치와 순위표를 필터링할 수 있습니다.</p>
+        </div>
+        <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+          <button
+            onClick={() => setSelectedMarketer("all")}
+            className="btn"
+            style={{
+              padding: "6px 12px",
+              fontSize: "0.85rem",
+              backgroundColor: selectedMarketer === "all" ? "#1e3a8a" : "#ffffff",
+              color: selectedMarketer === "all" ? "#ffffff" : "#475569",
+              border: "1px solid #cbd5e1",
+            }}
+          >
+            전체 3팀
+          </button>
+          {allMarketersList.map((m: any) => (
+            <button
+              key={m.name}
+              onClick={() => setSelectedMarketer(m.name)}
+              className="btn"
+              style={{
+                padding: "6px 12px",
+                fontSize: "0.85rem",
+                backgroundColor: selectedMarketer === m.name ? "#1e3a8a" : "#ffffff",
+                color: selectedMarketer === m.name ? "#ffffff" : "#475569",
+                border: "1px solid #cbd5e1",
+              }}
+            >
+              {m.name}
+            </button>
+          ))}
+          <button
+            onClick={handleDownloadHTML}
+            disabled={isCapturing}
+            className="btn"
+            style={{
+              padding: "6px 14px",
+              fontSize: "0.85rem",
+              backgroundColor: isCapturing ? "#94a3b8" : "#16a34a",
+              color: "#ffffff",
+              border: `1px solid ${isCapturing ? "#64748b" : "#15803d"}`,
+              marginLeft: "8px",
+              cursor: isCapturing ? "wait" : "pointer",
+              opacity: isCapturing ? 0.8 : 1,
+            }}
+          >
+            {isCapturing ? "⏳ 캡처 중..." : "💾 HTML 다운로드"}
+          </button>
+        </div>
+      </div>
+
+      {/* ========================================================
+         ORIGINAL REPORT RENDER
+         ======================================================== */}
+
+      {/* Header Banner */}
+      <div className="report-header-banner">
+        <h1>3팀 영업 현황 및 매출 지표 종합 분석 보고서</h1>
+        <div className="meta-info">
+          지표 산출 기준일: {activeYearStr}년 {parseInt(activeMonthStr, 10)}월 {stats.elapsedDays}일 누적 데이터 | 작성 대상: 3팀 관리자 배포용
+        </div>
+      </div>
+
+      {/* KPI Cards Grid */}
+      <table className="report-kpi-table">
+        <tbody>
+          <tr>
+            <td className="report-kpi-card">
+              <div className="report-kpi-title">{parseInt(activeMonthStr, 10)}월 누적 매출액 ({stats.elapsedDays}일)</div>
+              <div className="report-kpi-value">{formatNumber(activeKPI.sales).replace("원", " 원")}</div>
+              <div className="report-kpi-sub">
+                목표 달성률 <span className="bold color-blue">{activeKPI.rate}%</span>
+              </div>
+            </td>
+            <td className="report-kpi-card">
+              <div className="report-kpi-title">{parseInt(activeMonthStr, 10)}월 마감 예상 매출</div>
+              <div className="report-kpi-value">{formatNumber(activeKPI.expected).replace("원", " 원")}</div>
+              <div className="report-kpi-sub">
+                예상 최종 달성률 <span className="bold color-blue">{activeKPI.expectedRate}%</span>
+              </div>
+            </td>
+            <td className="report-kpi-card">
+              <div className="report-kpi-title">현재 라이브 계정 수</div>
+              <div className="report-kpi-value">{activeKPI.live}개 계정</div>
+              <div className="report-kpi-sub">
+                최다: <span className="bold">{activeKPI.topLive}</span>
+              </div>
+            </td>
+            <td className="report-kpi-card alert">
+              <div className="report-kpi-title">{parseInt(activeMonthStr, 10)}월 광고주 유입/이탈</div>
+              <div className="report-kpi-value">
+                {activeKPI.new === "-" ? "기록 없음" : `유입 ${activeKPI.new} / 이탈 ${activeKPI.lost}`}
+              </div>
+              <div className="report-kpi-sub">
+                {activeKPI.new === "-" ? (
+                  "-"
+                ) : (
+                  <>
+                    순감소{" "}
+                    <span className="bold color-red">
+                      {Number(activeKPI.lost) - Number(activeKPI.new)}개 광고주 풀
+                    </span>
+                  </>
+                )}
+              </div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
+      {/* Section 1: Monthly Trend Line Chart */}
+      <h2 className="report-section-title">1. 월간 매출 추이 및 {parseInt(activeMonthStr, 10)}월 마감 전망 분석</h2>
+      <p style={{ marginTop: "0", marginBottom: "15px", fontSize: "9.5pt", color: "#475569" }}>
+        3팀의 최근 3개월간 확정 매출 추이와 당월 가동 스텝을 기반으로 산출한 최종 마감 시뮬레이션 결과입니다.
+      </p>
+
+      {/* SVG line chart (Dynamic Rendering) */}
+      <div
+        style={{
+          marginBottom: "20px",
+          background: "#f8fafc",
+          border: "1px solid #e2e8f0",
+          borderRadius: "4px",
+          padding: "15px 10px 5px 10px",
+        }}
+      >
+        {(() => {
+          const formatChartLabel = (val: number) => {
+            if (val >= 100000000) {
+              return (val / 100000000).toFixed(2) + "억";
+            } else if (val >= 1000000) {
+              return (val / 1000000).toFixed(1) + "백만";
+            } else if (val >= 10000) {
+              return (val / 10000).toFixed(0) + "만";
+            }
+            return Math.round(val).toLocaleString() + "원";
+          };
+          return (
+            <svg viewBox="0 0 800 230" style={{ width: "100%", height: "auto", maxHeight: "230px" }}>
+              {/* Horizontal lines */}
+              <line x1="60" y1="180" x2="760" y2="180" stroke="#cbd5e1" strokeWidth="2" />
+              <line x1="60" y1="110" x2="760" y2="110" stroke="#e2e8f0" strokeWidth="1" strokeDasharray="5,5" />
+              <line x1="60" y1="40" x2="760" y2="40" stroke="#e2e8f0" strokeWidth="1" strokeDasharray="5,5" />
+
+              {/* Labels */}
+              <text x="50" y="185" fontSize="12" fill="#64748b" textAnchor="end">
+                {formatChartLabel(svgCoords.minVal)}
+              </text>
+              <text x="50" y="115" fontSize="12" fill="#64748b" textAnchor="end">
+                {formatChartLabel((svgCoords.minVal + svgCoords.maxVal) / 2)}
+              </text>
+              <text x="50" y="45" fontSize="12" fill="#64748b" textAnchor="end">
+                {formatChartLabel(svgCoords.maxVal)}
+              </text>
+
+              {/* SVG line */}
+              {(() => {
+                const linePoints: any[] = [];
+                for (let i = 0; i < svgCoords.targetIdx; i++) {
+                  if (svgCoords.points[i]) {
+                    linePoints.push(svgCoords.points[i]);
+                  }
+                }
+                if (svgCoords.points[svgCoords.expectedIdx]) {
+                  linePoints.push(svgCoords.points[svgCoords.expectedIdx]);
+                }
+                const pointsStr = linePoints.map((p) => `${p.x},${p.y}`).join(" ");
+                return (
+                  <polyline
+                    points={pointsStr}
+                    fill="none"
+                    stroke="#2563eb"
+                    strokeWidth="3"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                );
+              })()}
+              
+              {/* Target line (Dashed) */}
+              {(() => {
+                const startPt = svgCoords.points[svgCoords.targetIdx - 1];
+                if (!startPt) return null;
+                return (
+                  <polyline
+                    points={`${startPt.x},${startPt.y} ${svgCoords.targetPoint.x},${svgCoords.targetPoint.y}`}
+                    fill="none"
+                    stroke="#cbd5e1"
+                    strokeWidth="2"
+                    strokeDasharray="6,4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                );
+              })()}
+
+              {/* Points & Values */}
+              {svgCoords.points.map((pt: any, idx: number) => {
+                if (idx === svgCoords.targetIdx) return null; // Skip drawing target point on the main line
+                const isProjection = idx === svgCoords.expectedIdx;
+                return (
+                  <g key={idx}>
+                    <circle cx={pt.x} cy={pt.y} r={isProjection ? "6" : "5"} fill={isProjection ? "#ea580c" : "#1e3a8a"} />
+                    <text
+                      x={pt.x}
+                      y={pt.y - 16}
+                      fontSize="13"
+                      fontWeight="bold"
+                      fill={isProjection ? "#c2410c" : "#1e293b"}
+                      textAnchor="middle"
+                    >
+                      {formatChartLabel(pt.label)}
+                    </text>
+                    <text x={pt.x} y="205" fontSize="13" fill="#475569" textAnchor="middle">
+                      {pt.name}
+                    </text>
+                  </g>
+                );
+              })}
+
+              {/* Target Value label */}
+              <circle cx={svgCoords.targetPoint.x} cy={svgCoords.targetPoint.y} r="4" fill="#64748b" />
+              <text
+                x={svgCoords.targetPoint.x}
+                y={svgCoords.targetPoint.y - 16}
+                fontSize="12"
+                fill="#64748b"
+                textAnchor="middle"
+              >
+                목표 {formatChartLabel(stats.targetSales)}
+              </text>
+            </svg>
+          );
+        })()}
+      </div>
+
+      {/* Historical Trend Table */}
+      <table className="report-data-table">
+        <thead>
+          <tr>
+            <th style={{ width: "20%" }}>구분</th>
+            <th style={{ width: "25%" }}>총 매출액 (원)</th>
+            <th style={{ width: "20%" }}>전월 대비 증감률</th>
+            <th style={{ width: "35%" }}>주요 지표 및 현황 요약</th>
+          </tr>
+        </thead>
+        <tbody>
+          {stats.historicalTrend.map((row: any, idx: number) => {
+            const isTarget = idx === 3;
+            const isExpected = idx === 4;
+            let bgColor = "inherit";
+            let textColor = "inherit";
+            if (isTarget) {
+              bgColor = "#f0f9ff";
+              textColor = "#1e40af";
+            } else if (isExpected) {
+              bgColor = "#fff7ed";
+              textColor = "#c2410c";
+            }
+            const getRowLabelText = (label: string) => {
+              if (label.endsWith("확정")) {
+                return `${label} 매출`;
+              }
+              if (label.endsWith("목표")) {
+                return `${label.replace("목표", "설정 목표")}`;
+              }
+              if (label.endsWith("예상")) {
+                return `${label.replace("예상", "마감 예상치")}`;
+              }
+              return label;
+            };
+            return (
+              <tr key={idx} style={{ backgroundColor: bgColor }}>
+                <td className="text-center bold">{getRowLabelText(row.label)}</td>
+                <td className="text-right bold" style={{ color: textColor }}>
+                  {formatNumber(row.sales)}
+                </td>
+                <td className="text-center color-blue bold">{row.rate}</td>
+                <td>{row.desc}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+
+      {/* Risk Guide Box */}
+      <div className="report-insight-box warning">
+        <div className="report-insight-title">💡 관리자 리스크 제어 가이드</div>
+        <div dangerouslySetInnerHTML={{ __html: dynamicRiskGuide }} />
+      </div>
+
+      {/* Section 2: Media Analysis */}
+      <h2 className="report-section-title">2. {parseInt(activeMonthStr, 10)}월 영업 유입 및 광고주/매체 변동성 현황</h2>
+      <h3 className="report-subsection-title">■ 주력 매체별 매출 비중 분석 ({parseInt(activeMonthStr, 10)}월 누적 기준)</h3>
+      <table className="report-data-table">
+        <thead>
+          <tr>
+            <th style={{ width: "25%" }}>매체명</th>
+            <th style={{ width: "30%" }}>5월 누적 매출액</th>
+            <th style={{ width: "20%" }}>팀 내 비중(%)</th>
+            <th style={{ width: "25%" }}>비고</th>
+          </tr>
+        </thead>
+        <tbody>
+          {stats.mediaShare.map((row: any) => (
+            <tr key={row.media}>
+              <td className="text-center bold">{row.media}</td>
+              <td className="text-right">{formatNumber(row.amount)}</td>
+              <td className="text-center bold color-blue">{row.pct}%</td>
+              <td className="text-center">{row.desc}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {/* Section 3: Marketer Table */}
+      <h2 className="report-section-title">3. 마케터별 성과 지표 및 계정 포트폴리오 디테일</h2>
+      <table className="report-data-table">
+        <thead>
+          <tr>
+            <th style={{ width: "10%" }}>마케터</th>
+            <th style={{ width: "12%" }}>운영 계정 수</th>
+            <th style={{ width: "15%" }}>5월 누적 매출</th>
+            <th style={{ width: "25%" }}>주력 통합 매체 (비중)</th>
+            <th style={{ width: "38%" }}>팀 내 매출 포지션 및 특이사항</th>
+          </tr>
+        </thead>
+        <tbody>
+          {filteredMarketersList.map((m: any) => (
+            <tr key={m.name}>
+              <td className="text-center bold">{m.name}</td>
+              <td className="text-center bold color-blue">{m.accounts}개</td>
+              <td className="text-right bold">{formatNumber(m.sales)}</td>
+              <td>{m.mediaMix}</td>
+              <td dangerouslySetInnerHTML={{ __html: `<b>${m.desc.split(".")[0]}.</b> ${m.desc.split(".").slice(1).join(".")}` }} />
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {/* Marketers Performance Forecast Simulation Table */}
+      <h3 className="report-subsection-title">■ 마케터별 {parseInt(activeMonthStr, 10)}월 목표 대비 마감 예상 시뮬레이션</h3>
+      <table className="report-data-table">
+        <thead>
+          <tr>
+            <th style={{ width: "16%" }}>마케터</th>
+            <th style={{ width: "21%" }}>5월 목표매출</th>
+            <th style={{ width: "21%" }}>현재 누적 매출</th>
+            <th style={{ width: "21%" }}>5월 예상 마감매출</th>
+            <th style={{ width: "21%" }}>예상 달성률</th>
+          </tr>
+        </thead>
+        <tbody>
+          {filteredMarketersList.map((m: any) => (
+            <tr key={m.name}>
+              <td className="text-center bold">{m.name}</td>
+              <td className="text-right">{formatNumber(m.target)}</td>
+              <td className="text-right color-blue bold">{formatNumber(m.sales)}</td>
+              <td className="text-right">{formatNumber(m.expected)}</td>
+              <td
+                className="text-center bold"
+                style={{ color: m.rate >= 100 ? "#16a34a" : m.rate >= 80 ? "#1e293b" : "#dc2626" }}
+              >
+                {m.rate}%
+              </td>
+            </tr>
+          ))}
+          {selectedMarketer === "all" && (
+            <tr style={{ backgroundColor: "#f1f5f9", borderTop: "2px solid #cbd5e1" }}>
+              <td className="text-center bold" style={{ color: "#1e3a8a" }}>합계</td>
+              <td className="text-right bold" style={{ color: "#1e3a8a" }}>{formatNumber(stats.targetSales)}</td>
+              <td className="text-right bold" style={{ color: "#1e3a8a" }}>{formatNumber(stats.totalSales)}</td>
+              <td className="text-right bold" style={{ color: "#1e3a8a" }}>{formatNumber(stats.expectedSales)}</td>
+              <td className="text-center bold" style={{ color: "#1e3a8a" }}>
+                {((stats.expectedSales / stats.targetSales) * 100).toFixed(1)}%
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+
+      {/* Marketers Account Inflows & Outflows */}
+      <h3 className="report-subsection-title">■ 마케터별 {parseInt(activeMonthStr, 10)}월 영업 유입 및 계정 이탈(피이관) 현황</h3>
+      <table className="report-data-table">
+        <thead>
+          <tr>
+            <th style={{ width: "25%" }}>마케터</th>
+            <th style={{ width: "25%" }}>5월 신규 유입 (건)</th>
+            <th style={{ width: "25%" }}>5월 타사 이관 (건)</th>
+            <th style={{ width: "25%", color: "#dc2626" }}>5월 이탈/피이관 (건)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {filteredMarketersList.map((m: any) => (
+            <tr key={m.name}>
+              <td className="text-center bold">{m.name}</td>
+              <td className={`text-center ${m.newCount > 0 ? "color-blue bold" : ""}`}>{m.newCount}</td>
+              <td className={`text-center ${m.transIn > 0 ? "color-blue bold" : ""}`}>{m.transIn}</td>
+              <td className={`text-center color-red ${m.transOut > 0 ? "bold" : ""}`}>{m.transOut}</td>
+            </tr>
+          ))}
+          {selectedMarketer === "all" && (
+            <tr style={{ backgroundColor: "#f1f5f9", fontWeight: "bold" }}>
+              <td className="text-center">합계</td>
+              <td className="text-center color-blue">{stats.newAccounts}</td>
+              <td className="text-center color-blue">
+                {stats.marketers.reduce((sum: number, m: any) => sum + m.transIn, 0)}
+              </td>
+              <td className="text-center color-red">{stats.lostAccounts}</td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+
+      {/* Section 4: Daily Sales Pattern */}
+      <h2 className="report-section-title green">4. 요일별 평균 매출 패턴 ({parseInt(activeMonthStr, 10)}월 {stats.elapsedDays}일 기준)</h2>
+      <div className="report-section-row" style={{ marginTop: "15px" }}>
+        
+        {/* Table column */}
+        <div className="report-section-col" style={{ flex: "4.5" }}>
+          <table className="report-data-table" style={{ marginBottom: "0" }}>
+            <thead>
+              <tr>
+                <th style={{ backgroundColor: "#f0fdf4", color: "#16a34a" }}>요일</th>
+                <th style={{ backgroundColor: "#f0fdf4", color: "#16a34a" }}>일평균 매출액</th>
+                <th style={{ backgroundColor: "#f0fdf4", color: "#16a34a" }}>특성</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stats.weeklyPattern.map((row: any) => {
+                const isMax = row.desc === "주간 최고점";
+                const isMin = row.desc === "주간 최저점";
+                let rowBg = "inherit";
+                let rowWeight = "normal";
+                let textColor = "inherit";
+
+                if (isMax) {
+                  rowBg = "#f0fdf4";
+                  rowWeight = "bold";
+                } else if (isMin) {
+                  rowBg = "#fff5f5";
+                  rowWeight = "bold";
+                  textColor = "#dc2626";
+                }
+
+                return (
+                  <tr key={row.day} style={{ backgroundColor: rowBg, fontWeight: rowWeight }}>
+                    <td className="text-center">{row.day}</td>
+                    <td className="text-right" style={{ color: textColor }}>
+                      {row.amount.toLocaleString()}원
+                    </td>
+                    <td className="text-center" style={{ color: textColor }}>{row.desc}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Vertical Chart column */}
+        <div className="report-section-col" style={{ flex: "5.5" }}>
+          <div className="report-v-bar-chart-container">
+            {stats.weeklyPattern.map((row: any) => {
+              const maxVal = Math.max(...stats.weeklyPattern.map((w: any) => w.amount)) || 25000000;
+              const fillPct = (row.amount / maxVal) * 100;
+              const isMin = row.desc === "주간 최저점";
+              return (
+                <div key={row.day} className="report-v-bar-col">
+                  <div className="report-v-bar-val" style={{ color: isMin ? "#dc2626" : "#1e293b" }}>
+                    {(row.amount / 1000000).toFixed(1)}M
+                  </div>
+                  <div className="report-v-bar-track">
+                    <div
+                      className={`report-v-bar-fill ${isMin ? "red" : ""}`}
+                      style={{ height: `${fillPct}%` }}
+                    />
+                  </div>
+                  <div className="report-v-bar-label" style={{ color: isMin ? "#dc2626" : "#475569" }}>
+                    {row.day.substring(0, 1)}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+      </div>
+
+      {/* Section 5: Top 10 Advertisers */}
+      <h2 className="report-section-title purple">5. {parseInt(activeMonthStr, 10)}월 매출 상위 TOP 10 광고주</h2>
+      
+      {/* Search Input for Advertiser */}
+      <div data-html-hide style={{ marginBottom: "12px", display: "flex", justifyContent: "flex-end" }}>
+        <input
+          type="text"
+          placeholder="광고주명 검색..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          style={{
+            padding: "6px 12px",
+            fontSize: "0.85rem",
+            borderRadius: "var(--radius-sm)",
+            border: "1px solid var(--border-color)",
+            outline: "none",
+            width: "200px",
+          }}
+        />
+      </div>
+
+      <table className="report-data-table" style={{ fontSize: "9.5pt" }}>
+        <thead>
+          <tr>
+            <th style={{ backgroundColor: "#f5f3ff", color: "#7c3aed", width: "12%" }}>순위</th>
+            <th style={{ backgroundColor: "#f5f3ff", color: "#7c3aed", width: "38%" }}>광고주명 (매체 합산)</th>
+            <th style={{ backgroundColor: "#f5f3ff", color: "#7c3aed", width: "22%" }}>담당 마케터</th>
+            <th style={{ backgroundColor: "#f5f3ff", color: "#7c3aed", width: "28%" }}>누적 매출 (원)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {filteredAdvertisersList.length > 0 ? (
+            filteredAdvertisersList.map((row: any, idx: number) => (
+              <tr key={row.name}>
+                <td className="text-center bold color-blue">{row.rank || idx + 1}</td>
+                <td className="bold">{row.name}</td>
+                <td className="text-center">{row.marketer}</td>
+                <td className="text-right bold">{formatNumber(row.sales)}</td>
+              </tr>
+            ))
+          ) : (
+            <tr>
+              <td colSpan={4} className="text-center" style={{ padding: "20px", color: "var(--text-muted)" }}>
+                검색된 광고주 실적이 존재하지 않습니다.
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+
+      {/* Dynamic closing strategy suggestion */}
+      <div className="report-insight-box" style={{ backgroundColor: "#f8fafc", borderLeftColor: "#1e3a8a", marginTop: "25px" }}>
+        <div className="report-insight-title" style={{ color: "#1e3a8a" }}>🎯 3팀 총괄 마감 전략 제언</div>
+        <p style={{ margin: "4px 0 0 0", fontSize: "9pt", color: "#334155" }}>
+          <span dangerouslySetInnerHTML={{ __html: dynamicClosingStrategy }} />
+        </p>
+      </div>
+
+    </div>
+  );
+}

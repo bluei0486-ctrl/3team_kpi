@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>3팀 종합 영업 현황 및 매출 지표 분석 보고서</title>
+<style>
+    *, *::before, *::after {
+        box-sizing: border-box;
+    }
+    @page {
+        size: A4;
+        margin: 20mm 15mm;
+        @bottom-right {
+            content: counter(page) " / " counter(pages);
+            font-size: 9pt;
+            color: #64748b;
+        }
+        @bottom-left {
+            content: "3팀 영업 실적 및 지표 분석 보고서";
+            font-size: 9pt;
+            color: #64748b;
+        }
+    }
+    body {
+        font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', Arial, sans-serif;
+        color: #1e293b;
+        margin: 0;
+        padding: 0;
+        line-height: 1.6;
+        font-size: 10pt;
+        background-color: #ffffff;
+    }
+    
+    /* Header Stlye */
+    .header-banner {
+        background-color: #1e3a8a;
+        color: #ffffff;
+        padding: 25px 20px;
+        margin-bottom: 25px;
+        border-radius: 6px;
+    }
+    .header-banner h1 {
+        font-size: 20pt;
+        margin: 0 0 8px 0;
+        font-weight: bold;
+        letter-spacing: -0.5px;
+        border: none;
+        padding: 0;
+    }
+    .header-banner .meta-info {
+        font-size: 9.5pt;
+        color: #93c5fd;
+    }
+    
+    h2 {
+        font-size: 13pt;
+        color: #1e40af;
+        border-left: 4px solid #1e40af;
+        padding-left: 8px;
+        margin-top: 25px;
+        margin-bottom: 15px;
+        font-weight: bold;
+        page-break-after: avoid;
+    }
+    
+    h3 {
+        font-size: 11pt;
+        color: #1e3a8a;
+        margin-top: 20px;
+        margin-bottom: 10px;
+    }
+
+    /* KPI Summary Cards */
+    .kpi-table {
+        width: 100%;
+        border-collapse: separate;
+        border-spacing: 10px 0;
+        margin-bottom: 25px;
+    }
+    .kpi-card {
+        background-color: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-top: 4px solid #2563eb;
+        padding: 12px;
+        text-align: center;
+        border-radius: 4px;
+        width: 25%;
+    }
+    .kpi-card.alert {
+        border-top-color: #ea580c;
+    }
+    .kpi-title {
+        font-size: 8.5pt;
+        color: #64748b;
+        margin-bottom: 6px;
+        font-weight: bold;
+    }
+    .kpi-value {
+        font-size: 13.5pt;
+        font-weight: bold;
+        color: #0f172a;
+    }
+    .kpi-sub {
+        font-size: 8pt;
+        color: #64748b;
+        margin-top: 4px;
+    }
+    
+    /* Standard Tables */
+    table.data-table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-bottom: 20px;
+        font-size: 9pt;
+    }
+    table.data-table th {
+        background-color: #f1f5f9;
+        color: #1e3a8a;
+        font-weight: bold;
+        text-align: center;
+        padding: 8px 6px;
+        border-top: 1px solid #cbd5e1;
+        border-bottom: 2px solid #cbd5e1;
+    }
+    table.data-table td {
+        padding: 8px 6px;
+        border-bottom: 1px solid #e2e8f0;
+    }
+    table.data-table tr:nth-child(even) {
+        background-color: #f8fafc;
+    }
+    
+    .text-center { text-align: center; }
+    .text-right { text-align: right; }
+    .bold { font-weight: bold; }
+    .color-blue { color: #2563eb; }
+    .color-red { color: #dc2626; }
+    
+    /* Dual Column Layout */
+    .section-row {
+        display: table;
+        width: 100%;
+        border-spacing: 15px 0;
+        margin-bottom: 20px;
+    }
+    .section-col {
+        display: table-cell;
+        vertical-align: top;
+    }
+    
+    /* Insight Box */
+    .insight-box {
+        background-color: #f0fdf4;
+        border-left: 4px solid #16a34a;
+        padding: 12px;
+        margin-top: 15px;
+        margin-bottom: 20px;
+        border-radius: 0 4px 4px 0;
+        font-size: 9pt;
+    }
+    .insight-title {
+        font-weight: bold;
+        color: #14532d;
+        margin-bottom: 4px;
+    }
+    .insight-box.warning {
+        background-color: #fff7ed;
+        border-left-color: #f97316;
+    }
+    .insight-box.warning .insight-title {
+        color: #7c2d12;
+    }
+    
+    /* Vertical Bar Chart Custom Styles */
+    .v-bar-chart-container {
+        display: flex;
+        justify-content: space-around;
+        align-items: flex-end;
+        padding: 20px 10px;
+        background: #ffffff;
+        border: 1px solid #e2e8f0;
+        border-radius: 4px;
+        height: 240px; /* 전체 높이 */
+    }
+    .v-bar-col {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: flex-end;
+        height: 100%;
+        width: 12%;
+    }
+    .v-bar-val {
+        font-size: 8pt;
+        font-weight: bold;
+        color: #1e293b;
+        margin-bottom: 6px;
+    }
+    .v-bar-track {
+        width: 24px;
+        height: 150px;
+        background-color: #f1f5f9;
+        border-radius: 3px;
+        display: flex;
+        align-items: flex-end;
+        overflow: hidden;
+    }
+    .v-bar-fill {
+        width: 100%;
+        background-color: #16a34a;
+        border-radius: 3px 3px 0 0;
+    }
+    .v-bar-fill.red { background-color: #ef4444; }
+    .v-bar-label {
+        margin-top: 10px;
+        font-size: 9pt;
+        font-weight: bold;
+        color: #475569;
+    }
+    
+    .page-break {
+        page-break-before: always;
+    }
+</style>
+</head>
+<body>
+
+    <div class="header-banner">
+        <h1>3팀 영업 현황 및 매출 지표 종합 분석 보고서</h1>
+        <div class="meta-info">지표 산출 기준일: 2026년 5월 19일 누적 데이터 | 작성 대상: 3팀 관리자 배포용</div>
+    </div>
+
+    <table class="kpi-table">
+        <tr>
+            <td class="kpi-card">
+                <div class="kpi-title">5월 누적 매출액 (19일)</div>
+                <div class="kpi-value">332,716,279원</div>
+                <div class="kpi-sub">목표 달성률 <span class="bold color-blue">53.9%</span></div>
+            </td>
+            <td class="kpi-card">
+                <div class="kpi-title">5월 마감 예상 매출</div>
+                <div class="kpi-value">542,852,876원</div>
+                <div class="kpi-sub">예상 최종 달성률 <span class="bold color-blue">88.0%</span></div>
+            </td>
+            <td class="kpi-card">
+                <div class="kpi-title">현재 라이브 계정 수</div>
+                <div class="kpi-value">723개 계정</div>
+                <div class="kpi-sub">정태수 마케터 <span class="bold">232개</span> 최다</div>
+            </td>
+            <td class="kpi-card alert">
+                <div class="kpi-title">5월 광고주 유입/이탈</div>
+                <div class="kpi-value">유입 11 / 이탈 18</div>
+                <div class="kpi-sub">순감소 <span class="bold color-red">7개 광고주 풀</span></div>
+            </td>
+        </tr>
+    </table>
+
+    <h2>1. 월간 매출 추이 및 5월 마감 전망 분석</h2>
+    <p style="margin-top: 0; font-size: 9.5pt; color: #475569;">3팀의 최근 3개월간 확정 매출 추이와 당월 가동 스텝을 기반으로 산출한 최종 마감 시뮬레이션 결과입니다.</p>
+    
+    <div style="margin-bottom: 20px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 15px 10px 5px 10px;">
+        <svg viewBox="0 0 800 230" style="width: 100%; height: auto; max-height: 230px;">
+            <line x1="60" y1="180" x2="760" y2="180" stroke="#cbd5e1" stroke-width="2" />
+            <line x1="60" y1="110" x2="760" y2="110" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="5,5" />
+            <line x1="60" y1="40" x2="760" y2="40" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="5,5" />
+
+            <text x="50" y="185" font-size="12" fill="#64748b" text-anchor="end">4억</text>
+            <text x="50" y="115" font-size="12" fill="#64748b" text-anchor="end">5.5억</text>
+            <text x="50" y="45" font-size="12" fill="#64748b" text-anchor="end">7억</text>
+
+            <polyline points="150,134 330,81 510,101 690,114" fill="none" stroke="#2563eb" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+            <polyline points="510,101 690,83" fill="none" stroke="#cbd5e1" stroke-width="2" stroke-dasharray="6,4" stroke-linecap="round" stroke-linejoin="round"/>
+
+            <circle cx="150" cy="134" r="5" fill="#1e3a8a" />
+            <text x="150" y="118" font-size="13" font-weight="bold" fill="#1e293b" text-anchor="middle">4.98억</text>
+            <text x="150" y="205" font-size="13" fill="#475569" text-anchor="middle">2월 확정</text>
+
+            <circle cx="330" cy="81" r="5" fill="#1e3a8a" />
+            <text x="330" y="65" font-size="13" font-weight="bold" fill="#1e293b" text-anchor="middle">6.12억</text>
+            <text x="330" y="205" font-size="13" fill="#475569" text-anchor="middle">3월 확정</text>
+
+            <circle cx="510" cy="101" r="5" fill="#1e3a8a" />
+            <text x="510" y="85" font-size="13" font-weight="bold" fill="#1e293b" text-anchor="middle">5.69억</text>
+            <text x="510" y="205" font-size="13" fill="#475569" text-anchor="middle">4월 확정</text>
+
+            <circle cx="690" cy="83" r="4" fill="#64748b" />
+            <text x="690" y="67" font-size="12" fill="#64748b" text-anchor="middle">목표 6.16억</text>
+
+            <circle cx="690" cy="114" r="6" fill="#ea580c" />
+            <text x="690" y="135" font-size="13" font-weight="bold" fill="#c2410c" text-anchor="middle">5.42억 (예상)</text>
+            <text x="690" y="205" font-size="13" font-weight="bold" fill="#475569" text-anchor="middle">5월 마감</text>
+        </svg>
+    </div>
+
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th style="width: 20%;">구분</th>
+                <th style="width: 25%;">총 매출액 (원)</th>
+                <th style="width: 20%;">전월 대비 증감률</th>
+                <th style="width: 35%;">주요 지표 및 현황 요약</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td class="text-center bold">2월 확정 매출</td>
+                <td class="text-right">498,755,934원</td>
+                <td class="text-center color-blue">-</td>
+                <td>안정적인 5억 원 선 유지 구간</td>
+            </tr>
+            <tr>
+                <td class="text-center bold">3월 확정 매출</td>
+                <td class="text-right">612,901,125원</td>
+                <td class="text-center color-blue">▲ 22.8%</td>
+                <td>상반기 최고점 달성, 전 매체 활성화 완료</td>
+            </tr>
+            <tr>
+                <td class="text-center bold">4월 확정 매출</td>
+                <td class="text-right">569,696,815원</td>
+                <td class="text-center color-red">▼ 7.0%</td>
+                <td>일부 매체 소폭 조정 및 안정화 단계</td>
+            </tr>
+            <tr style="background-color: #f0f9ff;">
+                <td class="text-center bold">5월 설정 목표</td>
+                <td class="text-right bold" style="color: #1e40af;">616,734,261원</td>
+                <td class="text-center">-</td>
+                <td>3월 최고 실적을 상회하는 도전적 목표 설정</td>
+            </tr>
+            <tr style="background-color: #fff7ed;">
+                <td class="text-center bold">5월 마감 예상치</td>
+                <td class="text-right bold" style="color: #c2410c;">542,852,876원</td>
+                <td class="text-center color-red">달성률 88.0%</td>
+                <td>현재 일평균 스텝(1,750만 원) 기준 시 <b>7,388만 원 부족</b> 예상</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div class="insight-box warning">
+        <div class="insight-title">💡 관리자 리스크 제어 가이드</div>
+        남은 5월 일정 동안 목표액을 100% 채우기 위해서는 현재 일평균 매출을 <b>1,750만 원에서 2,360만 원 수준으로 약 35% 가량 홀딩 볼륨을 리프트업</b>해야 합니다. 월말 집중 예산 증액 딜을 추진하거나 타 대행사 이관 계정의 세팅 속도를 긴급 단축시켜야 하는 시점입니다.
+    </div>
+
+    <h2>2. 5월 영업 유입 및 광고주/매체 변동성 현황</h2>
+    
+    <h3>■ 주력 매체별 매출 비중 분석 (5월 누적 기준)</h3>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th style="width: 25%;">매체명</th>
+                <th style="width: 30%;">5월 누적 매출액</th>
+                <th style="width: 20%;">팀 내 비중(%)</th>
+                <th style="width: 25%;">비고</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td class="text-center bold">네이버 (통합)</td>
+                <td class="text-right">158,376,950원</td>
+                <td class="text-center bold color-blue">47.6%</td>
+                <td class="text-center">압도적 1위 매체</td>
+            </tr>
+            <tr>
+                <td class="text-center bold">지마켓 (글로벌/AI 포함)</td>
+                <td class="text-right">115,120,380원</td>
+                <td class="text-center bold color-blue">34.6%</td>
+                <td class="text-center">오픈마켓 핵심</td>
+            </tr>
+            <tr>
+                <td class="text-center bold">카카오</td>
+                <td class="text-right">29,944,460원</td>
+                <td class="text-center">9.0%</td>
+                <td class="text-center">김정환 마케터 주력</td>
+            </tr>
+            <tr>
+                <td class="text-center bold">에이블리/기타 매체</td>
+                <td class="text-right">29,274,489원</td>
+                <td class="text-center">8.8%</td>
+                <td class="text-center">심재용/신희진 확장 중</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div class="page-break"></div>
+
+    <h2>3. 마케터별 성과 지표 및 계정 포트폴리오 디테일</h2>
+    
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th style="width: 10%;">마케터</th>
+                <th style="width: 12%;">운영 계정 수</th>
+                <th style="width: 15%;">5월 누적 매출</th>
+                <th style="width: 25%;">주력 통합 매체 (비중)</th>
+                <th style="width: 38%;">팀 내 매출 포지션 및 특이사항</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td class="text-center bold">정태수</td>
+                <td class="text-center bold color-blue">232개</td>
+                <td class="text-right bold">106,803,399원</td>
+                <td>네이버(50%), 지마켓(35%)</td>
+                <td><b>매출 1위 / 올라운더.</b> 팀 내 최다 계정을 통제하며 안정적 매출 견인 중이나 당월 이탈 역시 최다인 상태로 리스크 케어 요망.</td>
+            </tr>
+            <tr>
+                <td class="text-center bold">정태민</td>
+                <td class="text-center bold">22개</td>
+                <td class="text-right bold">59,856,407원</td>
+                <td>네이버 통합 (92%)</td>
+                <td><b>매출 2위 / 소수 정예형.</b> 극단적 네이버 집중을 통해 계정당 단가를 극한으로 끌어올림.</td>
+            </tr>
+            <tr>
+                <td class="text-center bold">심재용</td>
+                <td class="text-center bold">92개</td>
+                <td class="text-right bold">42,454,282원</td>
+                <td>지마켓(43%), 네이버(25%)</td>
+                <td><b>매출 3위 / 오픈마켓 특화.</b> 에이블리 등 매체 확장 기여.</td>
+            </tr>
+            <tr>
+                <td class="text-center bold">정윤지</td>
+                <td class="text-center bold">41개</td>
+                <td class="text-right bold">33,153,599원</td>
+                <td>지마켓(51%), 네이버(24%)</td>
+                <td><b>매출 4위 / 매체 확장형.</b> 지마켓 통합 매체 기반 확보.</td>
+            </tr>
+            <tr>
+                <td class="text-center bold">신희진</td>
+                <td class="text-center bold">184개</td>
+                <td class="text-right bold">31,023,629원</td>
+                <td>지마켓(48%), 11번가(27%)</td>
+                <td><b>매출 5위 / 다품종 대량형.</b> 대량 세팅 운영, 리소스 최적화 필요.</td>
+            </tr>
+            <tr>
+                <td class="text-center bold">김정환</td>
+                <td class="text-center bold">85개</td>
+                <td class="text-right bold">26,792,295원</td>
+                <td>네이버(29%), 카카오(19%)</td>
+                <td><b>매출 6위 / 영업 돌파형.</b> 타 대행사 계정 딜(영업 이관) 능력 탁월.</td>
+            </tr>
+            <tr>
+                <td class="text-center bold">장평화</td>
+                <td class="text-center bold">54개</td>
+                <td class="text-right bold">25,359,099원</td>
+                <td>네이버(55%), 지마켓(22%)</td>
+                <td><b>매출 7위 / 고효율 방어형.</b> 견고한 방어력 보유.</td>
+            </tr>
+            <tr>
+                <td class="text-center bold">권지원</td>
+                <td class="text-center bold">13개</td>
+                <td class="text-right">7,273,569원</td>
+                <td>네이버 통합 (99%)</td>
+                <td><b>매출 8위 / 전담 육성 단계.</b> 매체 분산 및 스케일업 시급.</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h3>■ 마케터별 5월 목표 대비 마감 예상 시뮬레이션</h3>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th style="width: 16%;">마케터</th>
+                <th style="width: 21%;">5월 목표매출</th>
+                <th style="width: 21%;">현재 누적 매출</th>
+                <th style="width: 21%;">5월 예상 마감매출</th>
+                <th style="width: 21%;">예상 달성률</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td class="text-center bold">정태민</td>
+                <td class="text-right">79,284,315원</td>
+                <td class="text-right color-blue bold">59,856,407원</td>
+                <td class="text-right">97,660,453원</td>
+                <td class="text-center bold" style="color: #16a34a;">123.2%</td>
+            </tr>
+            <tr>
+                <td class="text-center bold">정윤지</td>
+                <td class="text-right">56,572,123원</td>
+                <td class="text-right color-blue bold">33,153,599원</td>
+                <td class="text-right">54,092,714원</td>
+                <td class="text-center bold">95.6%</td>
+            </tr>
+            <tr>
+                <td class="text-center bold">심재용</td>
+                <td class="text-right">76,184,176원</td>
+                <td class="text-right color-blue bold">42,454,282원</td>
+                <td class="text-right">69,267,512원</td>
+                <td class="text-center bold">90.9%</td>
+            </tr>
+            <tr>
+                <td class="text-center bold">장평화</td>
+                <td class="text-right">48,687,019원</td>
+                <td class="text-right color-blue bold">25,359,099원</td>
+                <td class="text-right">41,375,372원</td>
+                <td class="text-center bold">85.0%</td>
+            </tr>
+            <tr>
+                <td class="text-center bold">김정환</td>
+                <td class="text-right">53,245,612원</td>
+                <td class="text-right color-blue bold">26,792,295원</td>
+                <td class="text-right">43,713,744원</td>
+                <td class="text-center bold">82.1%</td>
+            </tr>
+            <tr>
+                <td class="text-center bold">정태수</td>
+                <td class="text-right">216,512,875원</td>
+                <td class="text-right color-blue bold">106,803,399원</td>
+                <td class="text-right">174,258,177원</td>
+                <td class="text-center bold">80.5%</td>
+            </tr>
+            <tr>
+                <td class="text-center bold">신희진</td>
+                <td class="text-right">68,955,725원</td>
+                <td class="text-right color-blue bold">31,023,629원</td>
+                <td class="text-right">50,617,500원</td>
+                <td class="text-center bold" style="color: #dc2626;">73.4%</td>
+            </tr>
+            <tr>
+                <td class="text-center bold">권지원</td>
+                <td class="text-right">17,292,416원</td>
+                <td class="text-right color-blue bold">7,273,569원</td>
+                <td class="text-right">11,866,875원</td>
+                <td class="text-center bold" style="color: #dc2626;">68.6%</td>
+            </tr>
+            <tr style="background-color: #f1f5f9; border-top: 2px solid #cbd5e1;">
+                <td class="text-center bold" style="color: #1e3a8a;">합계</td>
+                <td class="text-right bold" style="color: #1e3a8a;">616,734,261원</td>
+                <td class="text-right bold" style="color: #1e3a8a;">332,716,279원</td>
+                <td class="text-right bold" style="color: #1e3a8a;">542,852,876원</td>
+                <td class="text-center bold" style="color: #1e3a8a;">88.0%</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h3>■ 마케터별 5월 영업 유입 및 계정 이탈(피이관) 현황</h3>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th style="width: 25%;">마케터</th>
+                <th style="width: 25%;">5월 신규 유입 (건)</th>
+                <th style="width: 25%;">5월 타사 이관 (건)</th>
+                <th style="width: 25%; color: #dc2626;">5월 이탈/피이관 (건)</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td class="text-center bold">장평화</td>
+                <td class="text-center color-blue">2</td>
+                <td class="text-center">0</td>
+                <td class="text-center color-red">1</td>
+            </tr>
+            <tr>
+                <td class="text-center bold">김정환</td>
+                <td class="text-center">0</td>
+                <td class="text-center color-blue">2</td>
+                <td class="text-center color-red">0</td>
+            </tr>
+            <tr>
+                <td class="text-center bold">정태수</td>
+                <td class="text-center color-blue">1</td>
+                <td class="text-center color-blue">1</td>
+                <td class="text-center color-red bold">4</td>
+            </tr>
+            <tr>
+                <td class="text-center bold">나머지 팀원 합산</td>
+                <td class="text-center">2</td>
+                <td class="text-center">3</td>
+                <td class="text-center color-red">13</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div class="page-break"></div>
+
+    <h2 style="border-left-color: #16a34a; color: #16a34a; margin-top: 0;">4. 요일별 평균 매출 패턴 (5월 19일 기준)</h2>
+    <div class="section-row" style="margin-top: 15px; border-spacing: 20px 0;">
+        
+        <div class="section-col" style="width: 45%;">
+            <table class="data-table" style="margin-bottom: 0;">
+                <thead>
+                    <tr>
+                        <th style="background-color: #f0fdf4; color: #16a34a;">요일</th>
+                        <th style="background-color: #f0fdf4; color: #16a34a;">일평균 매출액</th>
+                        <th style="background-color: #f0fdf4; color: #16a34a;">특성</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr style="background-color: #f0fdf4; font-weight: bold;">
+                        <td class="text-center">월요일</td>
+                        <td class="text-right">약 23,800,000원</td>
+                        <td class="text-center">주간 최고점</td>
+                    </tr>
+                    <tr>
+                        <td class="text-center bold">화요일</td>
+                        <td class="text-right">약 21,500,000원</td>
+                        <td class="text-center">상승세 유지</td>
+                    </tr>
+                    <tr>
+                        <td class="text-center bold">수요일</td>
+                        <td class="text-right">약 20,200,000원</td>
+                        <td class="text-center">주 중반 방어</td>
+                    </tr>
+                    <tr>
+                        <td class="text-center bold">목요일</td>
+                        <td class="text-right">약 18,300,000원</td>
+                        <td class="text-center">평균 스텝 하회</td>
+                    </tr>
+                    <tr>
+                        <td class="text-center bold">금요일</td>
+                        <td class="text-right">약 16,100,000원</td>
+                        <td class="text-center">소진 둔화</td>
+                    </tr>
+                    <tr style="background-color: #fff5f5;">
+                        <td class="text-center bold" style="color: #dc2626;">토요일</td>
+                        <td class="text-right" style="color: #dc2626;">약 11,400,000원</td>
+                        <td class="text-center">주간 최저점</td>
+                    </tr>
+                    <tr>
+                        <td class="text-center bold">일요일</td>
+                        <td class="text-right">약 13,200,000원</td>
+                        <td class="text-center">주말 야간 회복</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+        
+        <div class="section-col" style="width: 55%;">
+            <div class="v-bar-chart-container">
+                <div class="v-bar-col">
+                    <div class="v-bar-val">23.8M</div>
+                    <div class="v-bar-track"><div class="v-bar-fill" style="height: 100%;"></div></div>
+                    <div class="v-bar-label">월</div>
+                </div>
+                <div class="v-bar-col">
+                    <div class="v-bar-val">21.5M</div>
+                    <div class="v-bar-track"><div class="v-bar-fill" style="height: 90%;"></div></div>
+                    <div class="v-bar-label">화</div>
+                </div>
+                <div class="v-bar-col">
+                    <div class="v-bar-val">20.2M</div>
+                    <div class="v-bar-track"><div class="v-bar-fill" style="height: 85%;"></div></div>
+                    <div class="v-bar-label">수</div>
+                </div>
+                <div class="v-bar-col">
+                    <div class="v-bar-val">18.3M</div>
+                    <div class="v-bar-track"><div class="v-bar-fill" style="height: 77%;"></div></div>
+                    <div class="v-bar-label">목</div>
+                </div>
+                <div class="v-bar-col">
+                    <div class="v-bar-val">16.1M</div>
+                    <div class="v-bar-track"><div class="v-bar-fill" style="height: 67%;"></div></div>
+                    <div class="v-bar-label">금</div>
+                </div>
+                <div class="v-bar-col">
+                    <div class="v-bar-val" style="color: #dc2626;">11.4M</div>
+                    <div class="v-bar-track"><div class="v-bar-fill red" style="height: 48%;"></div></div>
+                    <div class="v-bar-label" style="color: #dc2626;">토</div>
+                </div>
+                <div class="v-bar-col">
+                    <div class="v-bar-val">13.2M</div>
+                    <div class="v-bar-track"><div class="v-bar-fill" style="height: 55%;"></div></div>
+                    <div class="v-bar-label">일</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <h2 style="border-left-color: #7c3aed; color: #7c3aed; margin-top: 30px;">5. 5월 매출 상위 TOP 10 광고주</h2>
+    <table class="data-table" style="font-size: 9.5pt;">
+        <thead>
+            <tr>
+                <th style="background-color: #f5f3ff; color: #7c3aed; width: 12%;">순위</th>
+                <th style="background-color: #f5f3ff; color: #7c3aed; width: 38%;">광고주명 (매체 합산)</th>
+                <th style="background-color: #f5f3ff; color: #7c3aed; width: 22%;">담당 마케터</th>
+                <th style="background-color: #f5f3ff; color: #7c3aed; width: 28%;">누적 매출 (원)</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td class="text-center bold color-blue">1</td>
+                <td class="bold">비제이커머스</td>
+                <td class="text-center">심재용</td>
+                <td class="text-right bold">25,938,594원</td>
+            </tr>
+            <tr>
+                <td class="text-center bold color-blue">2</td>
+                <td class="bold">(주)웰템</td>
+                <td class="text-center">정태민</td>
+                <td class="text-right bold">25,405,886원</td>
+            </tr>
+            <tr>
+                <td class="text-center bold color-blue">3</td>
+                <td class="bold">(주)아이리스코리아</td>
+                <td class="text-center">정태민</td>
+                <td class="text-right bold">11,916,053원</td>
+            </tr>
+            <tr>
+                <td class="text-center bold">4</td>
+                <td>에스엠(S.M)인터내셔널</td>
+                <td class="text-center">정태수</td>
+                <td class="text-right">10,474,773원</td>
+            </tr>
+            <tr>
+                <td class="text-center bold">5</td>
+                <td>Dailyon(데일리온)</td>
+                <td class="text-center">장평화</td>
+                <td class="text-right">9,617,548원</td>
+            </tr>
+            <tr>
+                <td class="text-center bold">6</td>
+                <td>주식회사 첵스톤</td>
+                <td class="text-center">정태수</td>
+                <td class="text-right">8,658,160원</td>
+            </tr>
+            <tr>
+                <td class="text-center bold">7</td>
+                <td>대성웨빙</td>
+                <td class="text-center">정태수</td>
+                <td class="text-right">8,235,395원</td>
+            </tr>
+            <tr>
+                <td class="text-center bold">8</td>
+                <td>이프텍주식회사</td>
+                <td class="text-center">정태민</td>
+                <td class="text-right">7,400,824원</td>
+            </tr>
+            <tr>
+                <td class="text-center bold">9</td>
+                <td>주식회사 휴아코</td>
+                <td class="text-center">정태수</td>
+                <td class="text-right">6,927,782원</td>
+            </tr>
+            <tr>
+                <td class="text-center bold">10</td>
+                <td>주식회사 메이드인코나</td>
+                <td class="text-center">정윤지</td>
+                <td class="text-right">5,254,251원</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <div class="insight-box" style="background-color: #f8fafc; border-left-color: #1e3a8a; margin-top: 25px;">
+        <div class="insight-title" style="color: #1e3a8a;">🎯 3팀 총괄 마감 전략 제언</div>
+        <p style="margin: 4px 0 0 0; font-size: 9pt; color: #334155;">
+            최상위 우량 계정인 비제이커머스와 (주)웰템은 각 담당 마케터의 집중 관리를 통해 안정적인 매출 리딩을 수행 중입니다. 매출 안정화를 위해 주말 최저점 구간(금~토)에 대응하는 오픈마켓 타임 딜 프로모션을 정비하고, 신희진 마케터 등 달성률이 다소 부진한 인원의 계정을 고단가 중심으로 재조율한다면 5월 후반부 목표액 달성에 긍정적일 것으로 사료됩니다.
+        </p>
+    </div>
+
+</body>
+</html>
