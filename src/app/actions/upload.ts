@@ -111,17 +111,41 @@ export async function uploadExcelData(formData: FormData): Promise<UploadRespons
     }
 
     if (maxDateInFile) {
+      // 1. Check if daily sales data exists
       const { data: existingSales, error: existingSalesError } = await supabase
         .from("daily_sales")
         .select("sales_date")
         .eq("sales_date", maxDateInFile)
         .limit(1);
 
-      if (!existingSalesError && existingSales && existingSales.length > 0) {
-        // If the exact max date from the file is already in the database, block the upload.
+      // 2. Check if AI insights for this month exist
+      let activeYearCheck = new Date(maxDateInFile).getFullYear();
+      let activeMonthNumCheck = 5;
+      if (monthlyData.length > 0) {
+        const keys = Object.keys(monthlyData[0]);
+        for (const key of keys) {
+          const match = key.match(/^(\d+)월\s*목표/);
+          if (match) {
+            activeMonthNumCheck = parseInt(match[1], 10);
+            break;
+          }
+        }
+      }
+      const checkMonthDate = `${activeYearCheck}-${String(activeMonthNumCheck).padStart(2, "0")}-01`;
+
+      const { data: existingAi, error: aiError } = await supabase
+        .from("monthly_ai_insights")
+        .select("year_month")
+        .eq("year_month", checkMonthDate)
+        .limit(1);
+
+      const hasSales = !existingSalesError && existingSales && existingSales.length > 0;
+      const hasAi = !aiError && existingAi && existingAi.length > 0;
+
+      if (hasSales && hasAi) {
+        // Only block if BOTH data and AI insights exist
         return { success: false, message: "이미 등록된 데이터입니다" };
       }
-
     }
 
     // 4. Upsert Media
